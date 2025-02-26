@@ -115,6 +115,14 @@ func (s *Server) handleDump(c *gin.Context) {
 	c.String(200, response)
 }
 
+func (s *Server) handleGetActiveUEs(c *gin.Context) {
+	c.JSON(200, gin.H{"activeUEs": s.activeUEs})
+}
+
+func (s *Server) handleGetGNodeBs(c *gin.Context) {
+	c.JSON(200, gin.H{"gNodeBs": s.gNodeBs})
+}
+
 type CommandRequest struct {
 	Command  string `json:"command" binding:"required"`
 	NodeType string `json:"nodeType" binding:"required"`
@@ -129,10 +137,22 @@ func (s *Server) handleCommand(c *gin.Context) {
 	}
 
 	var response string
+	nodeNames := strings.Split(request.NodeName, " ")
+
+	// Nếu là gNodeB
 	if request.NodeType == "gnb" {
-		response = s.handleGnbCommand(request.Command, request.NodeName)
+		var responses []string
+		for _, nodeName := range nodeNames {
+			responses = append(responses, s.handleGnbCommand(request.Command, nodeName))
+		}
+		response = strings.Join(responses, "\n")
 	} else {
-		response = s.handleUeCommand(request.Command, request.NodeName)
+		// Nếu là UE
+		var responses []string
+		for _, nodeName := range nodeNames {
+			responses = append(responses, s.handleUeCommand(request.Command, nodeName))
+		}
+		response = strings.Join(responses, "\n")
 	}
 
 	c.JSON(200, gin.H{"response": response})
@@ -183,7 +203,6 @@ func (s *Server) handleUeCommand(cmd string, nodeName string) string {
 	args := parts[1:]
 
 	if command, exists := s.ueCommands[commandName]; exists {
-		// Check for --help flag first
 		if len(args) > 0 && args[0] == "--help" {
 			if helpText, exists := command.SubCommands["--help"]; exists {
 				return helpText // Return the help text directly from SubCommands
@@ -204,6 +223,8 @@ func main() {
 	router.GET("/connect", server.handleConnect)
 	router.GET("/dump", server.handleDump)
 	router.POST("/command", server.handleCommand)
+	router.GET("/active-ues", server.handleGetActiveUEs)
+	router.GET("/gnodebs", server.handleGetGNodeBs)
 
 	log.Printf("Server starting on port 4000...")
 	log.Fatal(router.Run(":4000"))

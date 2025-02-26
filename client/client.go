@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/abiosoft/ishell/v2"
 )
@@ -22,7 +23,6 @@ var (
 	gnbFlag  = flag.String("gnb", "", "connect to gNodeB")
 )
 
-// Add this new function to save and load port
 func savePort(port int) error {
 	return ioutil.WriteFile(".port", []byte(fmt.Sprintf("%d", port)), 0644)
 }
@@ -62,6 +62,44 @@ type CommandResponse struct {
 	Error    string `json:"error"`
 }
 
+// Fetch active UEs from the server
+func getActiveUEs() ([]string, error) {
+	url := getServerAddress() + "/active-ues"
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching UEs: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string][]string
+	body, _ := ioutil.ReadAll(resp.Body)
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling response: %v", err)
+	}
+
+	return result["activeUEs"], nil
+}
+
+// Fetch gNodeBs from the server
+func getGNodeBs() ([]string, error) {
+	url := getServerAddress() + "/gnodebs"
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching gNodeBs: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string][]string
+	body, _ := ioutil.ReadAll(resp.Body)
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling response: %v", err)
+	}
+
+	return result["gNodeBs"], nil
+}
+
 func sendCommand(command string, nodeType string, nodeName string) string {
 	url := getServerAddress() + "/command"
 	data, _ := json.Marshal(map[string]string{
@@ -87,26 +125,110 @@ func sendCommand(command string, nodeType string, nodeName string) string {
 	return result.Response
 }
 
-func showHelp() {
-	fmt.Println("Usage:")
-	fmt.Println("  ./cli -p <port>           : Connect to server")
-	fmt.Println("  ./cli --dump              : List all UEs and gNodeBs")
-	fmt.Println("  ./cli -ue <active-node>   : Connect to UE")
-	fmt.Println("  ./cli -gnb <gnb-name>     : Connect to gNodeB")
+// Function to send command to multiple UEs concurrently
+func sendCommandToMultipleUEs(command string, nodeType string, nodeNames []string) string {
+	var responses []string
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, nodeName := range nodeNames {
+		wg.Add(1)
+		go func(nodeName string) {
+			defer wg.Done()
+			response := sendCommand(command, nodeType, nodeName)
+			mu.Lock()
+			responses = append(responses, fmt.Sprintf("Node %s: %s", nodeName, response))
+			mu.Unlock()
+		}(nodeName)
+	}
+
+	wg.Wait()
+	return strings.Join(responses, "\n")
 }
 
-func setupGnbShell(shell *ishell.Shell, gnbName string) {
+// Function to send command to multiple gNodeBs concurrently
+func sendCommandToMultipleGnb(command string, nodeType string, nodeNames []string) string {
+	var responses []string
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, nodeName := range nodeNames {
+		wg.Add(1)
+		go func(nodeName string) {
+			defer wg.Done()
+			response := sendCommand(command, nodeType, nodeName)
+			mu.Lock()
+			responses = append(responses, fmt.Sprintf("Node %s: %s", nodeName, response))
+			mu.Unlock()
+		}(nodeName)
+	}
+
+	wg.Wait()
+	return strings.Join(responses, "\n")
+}
+
+func setupUECommands(shell *ishell.Shell, ueNames []string) {
+	// Add UE commands
+	shell.AddCmd(&ishell.Cmd{
+		Name: "register",
+		Help: "Sign in the UE to Core",
+		Func: func(c *ishell.Context) {
+			args := strings.Join(c.Args, " ")
+			response := sendCommandToMultipleUEs("register "+args, "ue", ueNames)
+			c.Println(response)
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "deregister",
+		Help: "Logout the UE from Core",
+		Func: func(c *ishell.Context) {
+			args := strings.Join(c.Args, " ")
+			response := sendCommandToMultipleUEs("deregister "+args, "ue", ueNames)
+			c.Println(response)
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "xn-handover",
+		Help: "Execute XN handover procedure",
+		Func: func(c *ishell.Context) {
+			args := strings.Join(c.Args, " ")
+			response := sendCommandToMultipleUEs("xn-handover "+args, "ue", ueNames)
+			c.Println(response)
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "n2-handover",
+		Help: "Execute N2 handover procedure",
+		Func: func(c *ishell.Context) {
+			args := strings.Join(c.Args, " ")
+			response := sendCommandToMultipleUEs("n2-handover "+args, "ue", ueNames)
+			c.Println(response)
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "history",
+		Help: "Show command history",
+		Func: func(c *ishell.Context) {
+			c.Println("Command history not implemented yet.")
+		},
+	})
+}
+
+func setupGnbShell(shell *ishell.Shell, gnbNames []string) {
 	shell.AddCmd(&ishell.Cmd{
 		Name: "amf-info",
 		Help: "Show some status information about the given AMF",
 		Func: func(c *ishell.Context) {
 			args := strings.Join(c.Args, " ")
-			response := sendCommand("amf-info "+args, "gnb", gnbName)
+			response := sendCommandToMultipleGnb("amf-info "+args, "gnb", gnbNames)
 			c.Println(response)
 		},
 	})
 
-	// Add other gNB commands
 	gnbCommands := []struct {
 		name string
 		help string
@@ -125,11 +247,19 @@ func setupGnbShell(shell *ishell.Shell, gnbName string) {
 			Help: cmd.help,
 			Func: func(c *ishell.Context) {
 				args := strings.Join(c.Args, " ")
-				response := sendCommand(name+" "+args, "gnb", gnbName)
+				response := sendCommandToMultipleGnb(name+" "+args, "gnb", gnbNames)
 				c.Println(response)
 			},
 		})
 	}
+}
+
+func showHelp() {
+	fmt.Println("Usage:")
+	fmt.Println("  ./cli -p <port>           : Connect to server")
+	fmt.Println("  ./cli --dump              : List all UEs and gNodeBs")
+	fmt.Println("  ./cli -ue <active-node>   : Connect to UE")
+	fmt.Println("  ./cli -gnb <gnb-name>     : Connect to gNodeB")
 }
 
 func main() {
@@ -171,94 +301,104 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handling UE interactions
 	if *ueFlag != "" {
+		var ueNames []string
+		if *ueFlag == "" {
+			// If no specific UEs provided, get all active UEs
+			fetchedUEs, err := getActiveUEs()
+			if err != nil {
+				fmt.Println("Error fetching active UEs:", err)
+				return
+			}
+			ueNames = fetchedUEs
+		} else {
+			// Use the specified UEs
+			ueNames = strings.Fields(*ueFlag)
+		}
+
 		shell := ishell.New()
 		shell.SetPrompt(">>> ")
 		shell.ShowPrompt(true)
 
-		shell.Println("Connected to node:", *ueFlag)
+		shell.Println("Connected to UE(s):", strings.Join(ueNames, ", "))
 		shell.Println("Type 'help' for available commands")
 
-		// Add base commands
-		shell.AddCmd(&ishell.Cmd{
-			Name: "help",
-			Help: "Display available commands",
-			Func: func(c *ishell.Context) {
-				response := sendCommand("help", "ue", *ueFlag)
-				c.Println(response)
-			},
-		})
+		setupUECommands(shell, ueNames)
+		shell.Run()
+		return
+	}
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "register",
-			Help: "Sign in the UEs to Core",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("register "+args, "ue", *ueFlag)
-				c.Println(response)
-			},
-		})
+	// Handling gNodeB interactions
+	if *gnbFlag != "" {
+		var gnbNames []string
+		if *gnbFlag == "" {
+			// If no specific gNodeBs provided, get all gNodeBs
+			fetchedGnbs, err := getGNodeBs()
+			if err != nil {
+				fmt.Println("Error fetching gNodeBs:", err)
+				return
+			}
+			gnbNames = fetchedGnbs
+		} else {
+			// Use the specified gNodeBs
+			gnbNames = strings.Fields(*gnbFlag)
+		}
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "deregister",
-			Help: "Logout the UEs from Core",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("deregister "+args, "ue", *ueFlag)
-				c.Println(response)
-			},
-		})
+		shell := ishell.New()
+		shell.SetPrompt(">>> ")
+		shell.ShowPrompt(true)
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "xn-handover",
-			Help: "Execute XN handover procedure",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("xn-handover "+args, "ue", *ueFlag)
-				c.Println(response)
-			},
-		})
+		shell.Println("Connected to gNodeB(s):", strings.Join(gnbNames, ", "))
+		shell.Println("Type 'help' for available commands")
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "n2-handover",
-			Help: "Execute N2 handover procedure",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("n2-handover "+args, "ue", *ueFlag)
-				c.Println(response)
-			},
-		})
+		setupGnbShell(shell, gnbNames)
+		shell.Run()
+		return
+	}
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: "history",
-			Help: "Show command history",
-			Func: func(c *ishell.Context) {
-				response := getHistory()
-				c.Println(response)
-			},
-		})
+	// If neither UE nor gNodeB is specified, fetch all and interact with all
+	if *ueFlag == "" {
+		// Fetch the actual list of UEs from the server
+		ueNames, err := getActiveUEs()
+		if err != nil {
+			fmt.Println("Error fetching active UEs:", err)
+			return
+		}
+
+		shell := ishell.New()
+		shell.SetPrompt(">>> ")
+		shell.ShowPrompt(true)
+
+		shell.Println("Connected to all UEs:", strings.Join(ueNames, ", "))
+		shell.Println("Type 'help' for available commands")
+
+		// Setup commands for UE functionalities
+		setupUECommands(shell, ueNames)
 
 		// Start shell
 		shell.Run()
-		return
 	}
 
-	if *gnbFlag != "" {
+	if *gnbFlag == "" {
+		// Fetch the actual list of gNodeBs from the server
+		gnbNames, err := getGNodeBs()
+		if err != nil {
+			fmt.Println("Error fetching gNodeBs:", err)
+			return
+		}
+
 		shell := ishell.New()
 		shell.SetPrompt(">>> ")
 		shell.ShowPrompt(true)
 
-		shell.Println("Connected to gNodeB:", *gnbFlag)
+		shell.Println("Connected to all gNodeBs:", strings.Join(gnbNames, ", "))
 		shell.Println("Type 'help' for available commands")
 
-		setupGnbShell(shell, *gnbFlag)
+		// Setup commands for gNodeB functionalities
+		setupGnbShell(shell, gnbNames)
+
+		// Start shell
 		shell.Run()
-		return
 	}
-
-	fmt.Println("Invalid command. Use --help to see usage.")
-}
-
-func getHistory() any {
-	panic("unimplemented")
 }
