@@ -5,23 +5,17 @@ import (
 	"log"
 	"strings"
 
+	"github.com/abiosoft/ishell/v2"
 	"github.com/gin-gonic/gin"
 )
 
-type UECommand struct {
-	Description string
-	Handler     func(args []string, nodeName string) string
-	SubCommands map[string]string
-}
-
 type Server struct {
-	activeUEs  []string
-	gNodeBs    []string
-	ueCommands map[string]UECommand
+	activeUEs []string
+	gNodeBs   []string
 }
 
 func NewServer() *Server {
-	s := &Server{
+	return &Server{
 		activeUEs: []string{
 			"imsi-306956963543741",
 			"imsi-306950959944062",
@@ -35,74 +29,230 @@ func NewServer() *Server {
 			"MSSIM-gnb-003-03-2",
 		},
 	}
-
-	// Initialize UE commands
-	s.ueCommands = map[string]UECommand{
-		"help": {
-			Description: "Display available commands",
-			Handler: func(args []string, nodeName string) string {
-				var help strings.Builder
-				help.WriteString("Available commands:\n")
-				for name, cmd := range s.ueCommands {
-					help.WriteString(fmt.Sprintf("%-12s| %s\n", name, cmd.Description))
-				}
-				return help.String()
-			},
-		},
-		"register": {
-			Description: "Sign in the UE to Core",
-			Handler: func(args []string, nodeName string) string {
-				// Let handleUeCommand handle the --help flag
-				return fmt.Sprintf("Registering UE %s with args: %s", nodeName, strings.Join(args, " "))
-			},
-			SubCommands: map[string]string{
-				"--amf":     "Register UE to AMF",
-				"--smf":     "Register UE to SMF",
-				"--help":    "Usage: register [--amf] [--smf]\nRegister UE to core network components",
-				"--version": "Show command version",
-			},
-		},
-		"deregister": {
-			Description: "Logout the UE from Core",
-			Handler: func(args []string, nodeName string) string {
-				// Let handleUeCommand handle the --help flag
-				return fmt.Sprintf("Deregistering UE %s with args: %s", nodeName, strings.Join(args, " "))
-			},
-			SubCommands: map[string]string{
-				"--force": "Force deregister",
-				"--help":  "Usage: deregister [--force]\nDeregister UE from core network",
-			},
-		},
-		"xn-handover": {
-			Description: "Execute XN handover procedure",
-			Handler: func(args []string, nodeName string) string {
-				// Let handleUeCommand handle the --help flag
-				return fmt.Sprintf("Executing XN handover for UE %s with args: %s", nodeName, strings.Join(args, " "))
-			},
-			SubCommands: map[string]string{
-				"--source": "Source gNB ID",
-				"--target": "Target gNB ID",
-				"--help":   "Usage: xn-handover --source <gnb-id> --target <gnb-id>\nExecute XN handover between gNodeBs",
-			},
-		},
-		"n2-handover": {
-			Description: "Execute N2 handover procedure",
-			Handler: func(args []string, nodeName string) string {
-				// Let handleUeCommand handle the --help flag
-				return fmt.Sprintf("Executing N2 handover for UE %s with args: %s", nodeName, strings.Join(args, " "))
-			},
-			SubCommands: map[string]string{
-				"--source": "Source gNB ID",
-				"--target": "Target gNB ID",
-				"--help":   "Usage: n2-handover --source <gnb-id> --target <gnb-id>\nExecute N2 handover between gNodeBs",
-			},
-		},
-	}
-
-	return s
 }
 
-// Convert handlers to Gin handlers
+// Setup UE commands
+func (s *Server) setupUECommands(shell *ishell.Shell, ueName string) {
+	shell.AddCmd(&ishell.Cmd{
+		Name: "register",
+		Help: "Sign in the UE to Core",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 {
+				c.Println("Usage: register [--amf] [--smf] [--version] [--help]")
+				return
+			}
+			command := c.Args[0]
+			switch command {
+			case "--amf":
+				c.Println(fmt.Sprintf("Registering UE %s to AMF", ueName))
+			case "--smf":
+				c.Println(fmt.Sprintf("Registering UE %s to SMF", ueName))
+			case "--version":
+				c.Println("Register command v1.0")
+			case "--help":
+				c.Println("Usage: register [--amf] [--smf] [--version] [--help]")
+				c.Println("--amf      : Register UE to AMF")
+				c.Println("--smf      : Register UE to SMF")
+				c.Println("--version  : Show version")
+				c.Println("--help     : Show this help message")
+			default:
+				c.Println("Invalid subcommand for register")
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "deregister",
+		Help: "Logout the UE from Core",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 {
+				c.Println("Usage: deregister [--force] [--help]")
+				return
+			}
+			command := c.Args[0]
+			switch command {
+			case "--force":
+				c.Println(fmt.Sprintf("Force deregistering UE %s", ueName))
+			case "--help":
+				c.Println("Usage: deregister [--force]")
+				c.Println("--force    : Force deregister UE")
+			default:
+				c.Println("Invalid subcommand for deregister")
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "xn-handover",
+		Help: "Execute XN handover procedure",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 {
+				c.Println("Usage: xn-handover --source <gnb-id> --target <gnb-id> [--help] [--version]")
+				return
+			}
+			command := c.Args[0]
+			switch command {
+			case "--source":
+				c.Println(fmt.Sprintf("Executing XN handover for UE %s with source gNB ID %s", ueName, c.Args[1]))
+			case "--target":
+				c.Println(fmt.Sprintf("Executing XN handover for UE %s with target gNB ID %s", ueName, c.Args[1]))
+			case "--help":
+				c.Println("Usage: xn-handover --source <gnb-id> --target <gnb-id>")
+				c.Println("--source   : Source gNB ID")
+				c.Println("--target   : Target gNB ID")
+			case "--version":
+				c.Println("XN Handover command v1.0")
+			default:
+				c.Println("Invalid subcommand for xn-handover")
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "n2-handover",
+		Help: "Execute N2 handover procedure",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 {
+				c.Println("Usage: n2-handover --source <gnb-id> --target <gnb-id> [--help] [--version]")
+				return
+			}
+			command := c.Args[0]
+			switch command {
+			case "--source":
+				c.Println(fmt.Sprintf("Executing N2 handover for UE %s with source gNB ID %s", ueName, c.Args[1]))
+			case "--target":
+				c.Println(fmt.Sprintf("Executing N2 handover for UE %s with target gNB ID %s", ueName, c.Args[1]))
+			case "--help":
+				c.Println("Usage: n2-handover --source <gnb-id> --target <gnb-id>")
+				c.Println("--source   : Source gNB ID")
+				c.Println("--target   : Target gNB ID")
+			case "--version":
+				c.Println("N2 Handover command v1.0")
+			default:
+				c.Println("Invalid subcommand for n2-handover")
+			}
+		},
+	})
+}
+
+// Setup gNodeB commands
+func (s *Server) setupGnbCommands(shell *ishell.Shell, gnbName string) {
+	shell.AddCmd(&ishell.Cmd{
+		Name: "amf-info",
+		Help: "Show some status information about the given AMF",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 {
+				c.Println("Usage: amf-info [--version] [--help]")
+				return
+			}
+			command := c.Args[0]
+			switch command {
+			case "--version":
+				c.Println("AMF Info Tool v1.0.0")
+			case "--help":
+				c.Println("Usage: amf-info [--version] [amf-name]")
+				c.Println("--version : Show AMF Info version")
+				c.Println("--help    : Show this help message")
+			default:
+				c.Println(fmt.Sprintf("AMF Info for gNodeB %s: Connected and operational", gnbName))
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "amf-list",
+		Help: "List all AMFs associated with the gNB",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 || c.Args[0] == "--help" {
+				c.Println("Usage: amf-list [--help]")
+				c.Println("--help   : Show this help message")
+				return
+			}
+			// Giả sử danh sách AMF là một array mẫu
+			amfList := []string{"AMF-01", "AMF-02", "AMF-03"}
+			c.Println("AMF List for gNodeB " + gnbName + ":")
+			for _, amf := range amfList {
+				c.Println(amf)
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "status",
+		Help: "Check the status of the gNodeB",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) == 0 {
+				c.Println("Usage: status [--simple] [--detailed] [--help]")
+				return
+			}
+			command := c.Args[0]
+			switch command {
+			case "--simple":
+				c.Println(fmt.Sprintf("Simple Status for gNodeB %s: Operational", gnbName))
+			case "--detailed":
+				c.Println(fmt.Sprintf("Detailed Status for gNodeB %s: Full operational details...", gnbName))
+			case "--help":
+				c.Println("Usage: status [--simple] [--detailed] [--help]")
+				c.Println("--simple  : Show simple status")
+				c.Println("--detailed : Show detailed status")
+			default:
+				c.Println("Invalid subcommand for status")
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "info",
+		Help: "Show information about the gNodeB",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) > 0 && c.Args[0] == "--help" {
+				c.Println("Usage: info")
+				c.Println("Show information about gNodeB")
+				return
+			}
+			c.Println(fmt.Sprintf("gNodeB Info for %s: Model MSSIM-gnb-001, Location: Data Center A", gnbName))
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "ue-list",
+		Help: "List all UEs associated with the gNodeB",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) > 0 && c.Args[0] == "--version" {
+				c.Println("UE List Tool v1.0.0")
+				return
+			}
+			if len(c.Args) > 0 && c.Args[0] == "--help" {
+				c.Println("Usage: ue-list [--version]")
+				c.Println("List all UEs associated with the gNodeB")
+				return
+			}
+			// Giả sử danh sách UE kết nối
+			ueList := []string{"imsi-306956963543741", "imsi-306950959944062"}
+			c.Println("Connected UEs for gNodeB " + gnbName + ":")
+			for _, ue := range ueList {
+				c.Println(ue)
+			}
+		},
+	})
+
+	shell.AddCmd(&ishell.Cmd{
+		Name: "ue-count",
+		Help: "Print the total number of UEs connected to this gNodeB",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) > 0 && c.Args[0] == "--help" {
+				c.Println("Usage: ue-count")
+				c.Println("Print the total number of UEs connected to this gNodeB")
+				return
+			}
+			// Giả sử số lượng UE là 2
+			ueCount := 2
+			c.Println(fmt.Sprintf("Total number of UEs connected to gNodeB %s: %d", gnbName, ueCount))
+		},
+	})
+}
+
+// API Handlers
 func (s *Server) handleConnect(c *gin.Context) {
 	c.String(200, "Connected successfully")
 }
@@ -115,103 +265,80 @@ func (s *Server) handleDump(c *gin.Context) {
 	c.String(200, response)
 }
 
-func (s *Server) handleGetActiveUEs(c *gin.Context) {
-	c.JSON(200, gin.H{"activeUEs": s.activeUEs})
+// Updated executeUECommand function
+func (s *Server) executeUECommand(command string, ueName string) string {
+	shell := ishell.New()
+	s.setupUECommands(shell, ueName)
+
+	// Parse the command to get the command and arguments
+	cmdParts := strings.Fields(command)
+	if len(cmdParts) == 0 {
+		return "Empty command"
+	}
+
+	// Create a capture buffer to get the command output
+	var outputBuffer strings.Builder
+	shell.SetOut(&outputBuffer)
+
+	// Use the correct API to find and execute the command
+	err := shell.Process(cmdParts...)
+	if err != nil {
+		return fmt.Sprintf("Error executing command: %s", err)
+	}
+
+	return outputBuffer.String()
 }
 
-func (s *Server) handleGetGNodeBs(c *gin.Context) {
-	c.JSON(200, gin.H{"gNodeBs": s.gNodeBs})
-}
+// Updated executeGnbCommand function
+func (s *Server) executeGnbCommand(command string, gnbName string) string {
+	shell := ishell.New()
+	s.setupGnbCommands(shell, gnbName)
 
-type CommandRequest struct {
-	Command  string `json:"command" binding:"required"`
-	NodeType string `json:"nodeType" binding:"required"`
-	NodeName string `json:"nodeName" binding:"required"`
+	// Parse the command to get the command and arguments
+	cmdParts := strings.Fields(command)
+	if len(cmdParts) == 0 {
+		return "Empty command"
+	}
+
+	// Create a capture buffer to get the command output
+	var outputBuffer strings.Builder
+	shell.SetOut(&outputBuffer)
+
+	// Use the correct API to find and execute the command
+	err := shell.Process(cmdParts...)
+	if err != nil {
+		return fmt.Sprintf("Error executing command: %s", err)
+	}
+
+	return outputBuffer.String()
 }
 
 func (s *Server) handleCommand(c *gin.Context) {
-	var request CommandRequest
+	var request struct {
+		Command  string `json:"command" binding:"required"`
+		NodeType string `json:"nodeType" binding:"required"`
+		NodeName string `json:"nodeName" binding:"required"`
+	}
+
+	// Bind the request body to the struct
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Handle command based on node type (gnb or ue)
 	var response string
-	nodeNames := strings.Split(request.NodeName, " ")
-
-	// Nếu là gNodeB
 	if request.NodeType == "gnb" {
-		var responses []string
-		for _, nodeName := range nodeNames {
-			responses = append(responses, s.handleGnbCommand(request.Command, nodeName))
-		}
-		response = strings.Join(responses, "\n")
+		response = s.executeGnbCommand(request.Command, request.NodeName)
+	} else if request.NodeType == "ue" {
+		response = s.executeUECommand(request.Command, request.NodeName)
 	} else {
-		// Nếu là UE
-		var responses []string
-		for _, nodeName := range nodeNames {
-			responses = append(responses, s.handleUeCommand(request.Command, nodeName))
-		}
-		response = strings.Join(responses, "\n")
+		c.JSON(400, gin.H{"error": "Invalid node type"})
+		return
 	}
 
+	// Send the response
 	c.JSON(200, gin.H{"response": response})
-}
-
-func (s *Server) handleGnbCommand(cmd string, gnbName string) string {
-	parts := strings.Fields(cmd)
-	command := parts[0]
-	args := parts[1:]
-
-	switch command {
-	case "help":
-		return `Available commands:
-			amf-info  | Show some status information about the given AMF
-			amf-list  | List all AMFs associated with the gNB
-			info      | Show some information about the gNB
-			status    | Show some status information about the gNB
-			ue-count  | Print the total number of UEs connected the this gNB
-			ue-list   | List all UEs associated with the gNB`
-
-	case "amf-info":
-		if len(args) > 0 && args[0] == "--help" {
-			return "Usage: amf-info [--version] [amf-name]\nShow detailed information about specified AMF"
-		}
-		if len(args) > 0 && args[0] == "--version" {
-			return "AMF Info Tool v1.0.0"
-		}
-		return fmt.Sprintf("AMF Info for %s: Connected and operational", gnbName)
-
-	case "ue-list":
-		if len(args) > 0 && args[0] == "--version" {
-			return "UE List Tool v1.0.0"
-		}
-		return "Connected UEs:\n" + strings.Join(s.activeUEs[:2], "\n")
-
-	default:
-		return fmt.Sprintf("Executing %s command for gNodeB %s", command, gnbName)
-	}
-}
-
-func (s *Server) handleUeCommand(cmd string, nodeName string) string {
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
-		return "Empty command"
-	}
-
-	commandName := parts[0]
-	args := parts[1:]
-
-	if command, exists := s.ueCommands[commandName]; exists {
-		if len(args) > 0 && args[0] == "--help" {
-			if helpText, exists := command.SubCommands["--help"]; exists {
-				return helpText // Return the help text directly from SubCommands
-			}
-		}
-		return command.Handler(args, nodeName)
-	}
-
-	return fmt.Sprintf("Unknown command: %s", commandName)
 }
 
 func main() {
@@ -223,9 +350,8 @@ func main() {
 	router.GET("/connect", server.handleConnect)
 	router.GET("/dump", server.handleDump)
 	router.POST("/command", server.handleCommand)
-	router.GET("/active-ues", server.handleGetActiveUEs)
-	router.GET("/gnodebs", server.handleGetGNodeBs)
 
+	// Start the HTTP server
 	log.Printf("Server starting on port 4000...")
 	log.Fatal(router.Run(":4000"))
 }
