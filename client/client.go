@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"client-server/models"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,12 +15,11 @@ import (
 )
 
 var (
-	port        = flag.Int("p", 0, "server port")
-	dump        = flag.Bool("dump", false, "list all UEs and gNodeBs")
-	helpFlag    = flag.Bool("help", false, "show help")
-	ueFlag      = flag.String("ue", "", "connect to UE node")
-	gnbFlag     = flag.String("gnb", "", "connect to gNodeB")
-	commandFile = flag.String("c", "", "path to command configuration JSON file")
+	port     = flag.Int("p", 0, "server port")
+	dump     = flag.Bool("dump", false, "list all UEs and gNodeBs")
+	helpFlag = flag.Bool("help", false, "show help")
+	ueFlag   = flag.String("ue", "", "connect to UE node")
+	gnbFlag  = flag.String("gnb", "", "connect to gNodeB")
 )
 
 func savePort(port int) error {
@@ -62,6 +60,17 @@ type CommandResponse struct {
 	Error    string `json:"error"`
 }
 
+type Command struct {
+	Name         string `json:"name"`
+	Help         string `json:"help"`
+	DefaultUsage string `json:"defaultUsage"`
+}
+
+type CommandsListResponse struct {
+	Commands []Command `json:"commands"`
+	Error    string    `json:"error"`
+}
+
 func sendCommand(command string, nodeType string, nodeName string) string {
 	url := getServerAddress() + "/command"
 	data, _ := json.Marshal(map[string]string{
@@ -87,47 +96,72 @@ func sendCommand(command string, nodeType string, nodeName string) string {
 	return result.Response
 }
 
+func getCommandsList(nodeType string) ([]Command, error) {
+	url := fmt.Sprintf("%s/commands/%s", getServerAddress(), nodeType)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to server: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result CommandsListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("server error: %s", result.Error)
+	}
+
+	return result.Commands, nil
+}
+
 func showHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  ./cli -p <port>           : Connect to server")
 	fmt.Println("  ./cli --dump              : List all UEs and gNodeBs")
 	fmt.Println("  ./cli -ue <ue-name>       : Connect to a specific UE")
 	fmt.Println("  ./cli -gnb <gnb-name>     : Connect to a specific gNodeB")
-	fmt.Println("  ./cli -c <config-file>    : Load commands from a JSON configuration file")
 }
 
-func loadCommandsConfig(filePath string) (*models.CommandConfig, error) {
-	data, err := ioutil.ReadFile(filePath)
+func setupCommands(shell *ishell.Shell, nodeType string, nodeNames []string) error {
+	// Get the list of commands from server
+	commands, err := getCommandsList(nodeType)
 	if err != nil {
-		return nil, fmt.Errorf("error reading config file: %v", err)
+		return fmt.Errorf("failed to get commands: %v", err)
 	}
 
-	var commands models.CommandConfig
-	err = json.Unmarshal(data, &commands)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing config file: %v", err)
-	}
-
-	return &commands, nil
-}
-
-func setupUECommands(shell *ishell.Shell, commandsConf *models.CommandConfig, ueNames []string) {
-	for _, cmd := range commandsConf.UE.Commands {
-		// Create a copy of cmd for the closure
-		cmdCopy := cmd
+	// Add each command into shell
+	for _, cmd := range commands {
+		cmdCopy := cmd // create the replica for closure
 
 		shell.AddCmd(&ishell.Cmd{
 			Name: cmdCopy.Name,
 			Help: cmdCopy.Help,
 			Func: func(c *ishell.Context) {
-				for _, ueName := range ueNames {
+				// Nếu không có tham số, hiển thị cách sử dụng
+				if len(c.Args) == 0 {
+					c.Println(cmdCopy.DefaultUsage)
+					return
+				}
+
+				// Build the complete command to send to the server
+				for _, nodeName := range nodeNames {
 					command := cmdCopy.Name
 					if len(c.Args) > 0 {
 						command += " " + strings.Join(c.Args, " ")
 					}
-					response := sendCommand(command, "ue", ueName)
-					if len(ueNames) > 1 {
-						c.Printf("Response for UE %s:\n%s\n", ueName, response)
+
+					// Send response to server
+					response := sendCommand(command, nodeType, nodeName)
+
+					// Display the response
+					if len(nodeNames) > 1 {
+						if nodeType == "ue" {
+							c.Printf("Response for UE %s:\n%s\n", nodeName, response)
+						} else {
+							c.Printf("Response for gNodeB %s:\n%s\n", nodeName, response)
+						}
 					} else {
 						c.Println(response)
 					}
@@ -135,32 +169,8 @@ func setupUECommands(shell *ishell.Shell, commandsConf *models.CommandConfig, ue
 			},
 		})
 	}
-}
 
-func setupGnbCommands(shell *ishell.Shell, commandsConf *models.CommandConfig, gnbNames []string) {
-	for _, cmd := range commandsConf.GNB.Commands {
-		// Create a copy of cmd for the closure
-		cmdCopy := cmd
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: cmdCopy.Name,
-			Help: cmdCopy.Help,
-			Func: func(c *ishell.Context) {
-				for _, gnbName := range gnbNames {
-					command := cmdCopy.Name
-					if len(c.Args) > 0 {
-						command += " " + strings.Join(c.Args, " ")
-					}
-					response := sendCommand(command, "gnb", gnbName)
-					if len(gnbNames) > 1 {
-						c.Printf("Response for gNodeB %s:\n%s\n", gnbName, response)
-					} else {
-						c.Println(response)
-					}
-				}
-			},
-		})
-	}
+	return nil
 }
 
 func main() {
@@ -196,19 +206,6 @@ func main() {
 		return
 	}
 
-	// Check if command file is provided
-	if *commandFile == "" {
-		fmt.Println("Command configuration file is required. Use -c <config-file>")
-		return
-	}
-
-	// Load commands from file
-	commandsConf, err := loadCommandsConfig(*commandFile)
-	if err != nil {
-		fmt.Printf("Error loading commands: %v\n", err)
-		return
-	}
-
 	shell := ishell.New()
 	shell.SetPrompt(">>> ")
 	shell.ShowPrompt(true)
@@ -217,13 +214,25 @@ func main() {
 		ueNames := strings.Fields(*ueFlag)
 		shell.Println("Connected to UE(s):", strings.Join(ueNames, ", "))
 		shell.Println("Type 'help' for available commands")
-		setupUECommands(shell, commandsConf, ueNames)
+
+		// Get the commands of UE from server and setup shell
+		if err := setupCommands(shell, "ue", ueNames); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return
+		}
+
 		shell.Run()
 	} else if *gnbFlag != "" {
 		gnbNames := strings.Fields(*gnbFlag)
 		shell.Println("Connected to gNodeB(s):", strings.Join(gnbNames, ", "))
 		shell.Println("Type 'help' for available commands")
-		setupGnbCommands(shell, commandsConf, gnbNames)
+
+		// Get the commands of Gnb from server and setup shell
+		if err := setupCommands(shell, "gnb", gnbNames); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return
+		}
+
 		shell.Run()
 	} else {
 		fmt.Println("Usage: cli -ue <ue-name> or cli -gnb <gnb-name>")

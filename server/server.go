@@ -242,6 +242,35 @@ func (s *Server) handleCommand(c *gin.Context) {
 	c.JSON(200, gin.H{"response": response})
 }
 
+func (s *Server) handleGetCommands(c *gin.Context) {
+	nodeType := c.Param("nodeType")
+
+	var commands []map[string]string
+
+	if nodeType == "ue" {
+		for _, cmd := range s.commandsConf.UE.Commands {
+			commands = append(commands, map[string]string{
+				"name":         cmd.Name,
+				"help":         cmd.Help,
+				"defaultUsage": cmd.DefaultUsage,
+			})
+		}
+	} else if nodeType == "gnb" {
+		for _, cmd := range s.commandsConf.GNB.Commands {
+			commands = append(commands, map[string]string{
+				"name":         cmd.Name,
+				"help":         cmd.Help,
+				"defaultUsage": cmd.DefaultUsage,
+			})
+		}
+	} else {
+		c.JSON(400, gin.H{"error": "Invalid node type"})
+		return
+	}
+
+	c.JSON(200, gin.H{"commands": commands})
+}
+
 func main() {
 	flag.Parse()
 	gin.SetMode(gin.ReleaseMode)
@@ -260,6 +289,7 @@ func main() {
 	router.GET("/connect", server.handleConnect)
 	router.GET("/dump", server.handleDump)
 	router.POST("/command", server.handleCommand)
+	router.GET("/commands/:nodeType", server.handleGetCommands)
 
 	// Start the HTTP server
 	log.Printf("Server starting on port 4000...")
