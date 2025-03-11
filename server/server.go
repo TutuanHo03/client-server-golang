@@ -1,17 +1,27 @@
 package main
 
 import (
+	"client-server/models"
+	"encoding/json"
+	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/abiosoft/ishell/v2"
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	configFile = flag.String("c", "command.json", "Path to the configuration file")
+)
+
 type Server struct {
-	activeUEs []string
-	gNodeBs   []string
+	activeUEs    []string
+	gNodeBs      []string
+	commandsConf models.CommandConfig
 }
 
 func NewServer() *Server {
@@ -31,225 +41,116 @@ func NewServer() *Server {
 	}
 }
 
+// LoadCommandsConfig loads command configurations from a JSON file
+func (s *Server) LoadCommandsConfig(filePath string) error {
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("error reading config file: %v", err)
+	}
+
+	err = json.Unmarshal(data, &s.commandsConf)
+	if err != nil {
+		return fmt.Errorf("error parsing config file: %v", err)
+	}
+
+	return nil
+}
+
+// Render a response by replacing variables
+func renderResponse(response string, nodeName string, args []string) string {
+	result := strings.Replace(response, "${nodeName}", nodeName, -1)
+
+	// Replace ${arg1}, ${arg2}, etc. with actual arguments if provided
+	for i, arg := range args {
+		if i > 0 { // Skip the subcommand itself
+			argPlaceholder := fmt.Sprintf("${arg%d}", i)
+			result = strings.Replace(result, argPlaceholder, arg, -1)
+		}
+	}
+
+	return result
+}
+
 // Setup UE commands
 func (s *Server) setupUECommands(shell *ishell.Shell, ueName string) {
-	shell.AddCmd(&ishell.Cmd{
-		Name: "register",
-		Help: "Sign in the UE to Core",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 {
-				c.Println("Usage: register [--amf] [--smf] [--version] [--help]")
-				return
-			}
-			command := c.Args[0]
-			switch command {
-			case "--amf":
-				c.Println(fmt.Sprintf("Registering UE %s to AMF", ueName))
-			case "--smf":
-				c.Println(fmt.Sprintf("Registering UE %s to SMF", ueName))
-			case "--version":
-				c.Println("Register command v1.0")
-			case "--help":
-				c.Println("Usage: register [--amf] [--smf] [--version] [--help]")
-				c.Println("--amf      : Register UE to AMF")
-				c.Println("--smf      : Register UE to SMF")
-				c.Println("--version  : Show version")
-				c.Println("--help     : Show this help message")
-			default:
-				c.Println("Invalid subcommand for register")
-			}
-		},
-	})
+	for _, cmd := range s.commandsConf.UE.Commands {
+		// Create a copy of cmd for the closure
+		cmdCopy := cmd
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "deregister",
-		Help: "Logout the UE from Core",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 {
-				c.Println("Usage: deregister [--force] [--help]")
-				return
-			}
-			command := c.Args[0]
-			switch command {
-			case "--force":
-				c.Println(fmt.Sprintf("Force deregistering UE %s", ueName))
-			case "--help":
-				c.Println("Usage: deregister [--force]")
-				c.Println("--force    : Force deregister UE")
-			default:
-				c.Println("Invalid subcommand for deregister")
-			}
-		},
-	})
+		shell.AddCmd(&ishell.Cmd{
+			Name: cmdCopy.Name,
+			Help: cmdCopy.Help,
+			Func: func(c *ishell.Context) {
+				if len(c.Args) == 0 {
+					c.Println(cmdCopy.DefaultUsage)
+					return
+				}
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "xn-handover",
-		Help: "Execute XN handover procedure",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 {
-				c.Println("Usage: xn-handover --source <gnb-id> --target <gnb-id> [--help] [--version]")
-				return
-			}
-			command := c.Args[0]
-			switch command {
-			case "--source":
-				c.Println(fmt.Sprintf("Executing XN handover for UE %s with source gNB ID %s", ueName, c.Args[1]))
-			case "--target":
-				c.Println(fmt.Sprintf("Executing XN handover for UE %s with target gNB ID %s", ueName, c.Args[1]))
-			case "--help":
-				c.Println("Usage: xn-handover --source <gnb-id> --target <gnb-id>")
-				c.Println("--source   : Source gNB ID")
-				c.Println("--target   : Target gNB ID")
-			case "--version":
-				c.Println("XN Handover command v1.0")
-			default:
-				c.Println("Invalid subcommand for xn-handover")
-			}
-		},
-	})
+				subcommand := c.Args[0]
+				found := false
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "n2-handover",
-		Help: "Execute N2 handover procedure",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 {
-				c.Println("Usage: n2-handover --source <gnb-id> --target <gnb-id> [--help] [--version]")
-				return
-			}
-			command := c.Args[0]
-			switch command {
-			case "--source":
-				c.Println(fmt.Sprintf("Executing N2 handover for UE %s with source gNB ID %s", ueName, c.Args[1]))
-			case "--target":
-				c.Println(fmt.Sprintf("Executing N2 handover for UE %s with target gNB ID %s", ueName, c.Args[1]))
-			case "--help":
-				c.Println("Usage: n2-handover --source <gnb-id> --target <gnb-id>")
-				c.Println("--source   : Source gNB ID")
-				c.Println("--target   : Target gNB ID")
-			case "--version":
-				c.Println("N2 Handover command v1.0")
-			default:
-				c.Println("Invalid subcommand for n2-handover")
-			}
-		},
-	})
+				for _, sub := range cmdCopy.Subcommands {
+					if sub.Name == subcommand {
+						found = true
+						c.Println(renderResponse(sub.Response, ueName, c.Args))
+						break
+					}
+				}
+
+				if !found {
+					// Check if there's a default handler
+					for _, sub := range cmdCopy.Subcommands {
+						if sub.Name == "default" {
+							c.Println(renderResponse(sub.Response, ueName, c.Args))
+							return
+						}
+					}
+					c.Println("Invalid subcommand for " + cmdCopy.Name)
+				}
+			},
+		})
+	}
 }
 
 // Setup gNodeB commands
 func (s *Server) setupGnbCommands(shell *ishell.Shell, gnbName string) {
-	shell.AddCmd(&ishell.Cmd{
-		Name: "amf-info",
-		Help: "Show some status information about the given AMF",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 {
-				c.Println("Usage: amf-info [--version] [--help]")
-				return
-			}
-			command := c.Args[0]
-			switch command {
-			case "--version":
-				c.Println("AMF Info Tool v1.0.0")
-			case "--help":
-				c.Println("Usage: amf-info [--version] [amf-name]")
-				c.Println("--version : Show AMF Info version")
-				c.Println("--help    : Show this help message")
-			default:
-				c.Println(fmt.Sprintf("AMF Info for gNodeB %s: Connected and operational", gnbName))
-			}
-		},
-	})
+	for _, cmd := range s.commandsConf.GNB.Commands {
+		// Create a copy of cmd for the closure
+		cmdCopy := cmd
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "amf-list",
-		Help: "List all AMFs associated with the gNB",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 || c.Args[0] == "--help" {
-				c.Println("Usage: amf-list [--help]")
-				c.Println("--help   : Show this help message")
-				return
-			}
-			// Giả sử danh sách AMF là một array mẫu
-			amfList := []string{"AMF-01", "AMF-02", "AMF-03"}
-			c.Println("AMF List for gNodeB " + gnbName + ":")
-			for _, amf := range amfList {
-				c.Println(amf)
-			}
-		},
-	})
+		shell.AddCmd(&ishell.Cmd{
+			Name: cmdCopy.Name,
+			Help: cmdCopy.Help,
+			Func: func(c *ishell.Context) {
+				if len(c.Args) == 0 {
+					c.Println(cmdCopy.DefaultUsage)
+					return
+				}
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "status",
-		Help: "Check the status of the gNodeB",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) == 0 {
-				c.Println("Usage: status [--simple] [--detailed] [--help]")
-				return
-			}
-			command := c.Args[0]
-			switch command {
-			case "--simple":
-				c.Println(fmt.Sprintf("Simple Status for gNodeB %s: Operational", gnbName))
-			case "--detailed":
-				c.Println(fmt.Sprintf("Detailed Status for gNodeB %s: Full operational details...", gnbName))
-			case "--help":
-				c.Println("Usage: status [--simple] [--detailed] [--help]")
-				c.Println("--simple  : Show simple status")
-				c.Println("--detailed : Show detailed status")
-			default:
-				c.Println("Invalid subcommand for status")
-			}
-		},
-	})
+				subcommand := c.Args[0]
+				found := false
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "info",
-		Help: "Show information about the gNodeB",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) > 0 && c.Args[0] == "--help" {
-				c.Println("Usage: info")
-				c.Println("Show information about gNodeB")
-				return
-			}
-			c.Println(fmt.Sprintf("gNodeB Info for %s: Model MSSIM-gnb-001, Location: Data Center A", gnbName))
-		},
-	})
+				for _, sub := range cmdCopy.Subcommands {
+					if sub.Name == subcommand {
+						found = true
+						c.Println(renderResponse(sub.Response, gnbName, c.Args))
+						break
+					}
+				}
 
-	shell.AddCmd(&ishell.Cmd{
-		Name: "ue-list",
-		Help: "List all UEs associated with the gNodeB",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) > 0 && c.Args[0] == "--version" {
-				c.Println("UE List Tool v1.0.0")
-				return
-			}
-			if len(c.Args) > 0 && c.Args[0] == "--help" {
-				c.Println("Usage: ue-list [--version]")
-				c.Println("List all UEs associated with the gNodeB")
-				return
-			}
-			// Giả sử danh sách UE kết nối
-			ueList := []string{"imsi-306956963543741", "imsi-306950959944062"}
-			c.Println("Connected UEs for gNodeB " + gnbName + ":")
-			for _, ue := range ueList {
-				c.Println(ue)
-			}
-		},
-	})
-
-	shell.AddCmd(&ishell.Cmd{
-		Name: "ue-count",
-		Help: "Print the total number of UEs connected to this gNodeB",
-		Func: func(c *ishell.Context) {
-			if len(c.Args) > 0 && c.Args[0] == "--help" {
-				c.Println("Usage: ue-count")
-				c.Println("Print the total number of UEs connected to this gNodeB")
-				return
-			}
-			// Giả sử số lượng UE là 2
-			ueCount := 2
-			c.Println(fmt.Sprintf("Total number of UEs connected to gNodeB %s: %d", gnbName, ueCount))
-		},
-	})
+				if !found {
+					// Check if there's a default handler
+					for _, sub := range cmdCopy.Subcommands {
+						if sub.Name == "default" {
+							c.Println(renderResponse(sub.Response, gnbName, c.Args))
+							return
+						}
+					}
+					c.Println("Invalid subcommand for " + cmdCopy.Name)
+				}
+			},
+		})
+	}
 }
 
 // API Handlers
@@ -342,9 +243,18 @@ func (s *Server) handleCommand(c *gin.Context) {
 }
 
 func main() {
+	flag.Parse()
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 	server := NewServer()
+
+	// Load commands config
+	if err := server.LoadCommandsConfig(*configFile); err != nil {
+		log.Fatalf("Failed to load commands config: %v", err)
+		os.Exit(1)
+	}
+
+	log.Printf("Commands loaded successfully from %s", *configFile)
 
 	// Setup routes
 	router.GET("/connect", server.handleConnect)

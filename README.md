@@ -1,20 +1,25 @@
 # Client-Server Command Tool
 
+## Server Setup
+
+To run the server, navigate to the `server` directory and run:
+
+```sh
+cd server
+go build -o server
+./server -c ../config/command.json
+```
+
 ## Building the Client CLI
 
 To build the client CLI, move to the `client` directory and run:
 
 ```sh
 cd client
-go build -o ../build/cli client.go
-```
+go build -o client
 
-## Server Setup
-
-To run the server, navigate to the `server` directory and run:
-
-```sh
-go run server.go
+./client -p 4000 # Connect to port 4000 
+./client --dump # List all UE and Gnb that server has
 ```
 
 ## Running the Client CLI
@@ -22,18 +27,21 @@ go run server.go
 To run the client CLI, use the following command:
 
 ```sh
-cd build
-./cli -p 4000 //Connect to port 4000
-./cli --dump //List all UEs and gNodeB that server has
-
-./cli --ue <node-name>
-./cli --gnb <gnb-name>
+cd client
+# For UE
+./client -c ../config/commands.json -ue "<node-name>"
+# For gNodeB
+./client -c ../config/commands.json -gnb "<gnb-name>"
 ```
 
 For example:
 
 ```sh
-./cli -ue imsi-001010000000001
+# For UE:
+./client -c ../config/commands.json -ue "imsi-306956963543741"
+
+# For gNodeB
+./client -c ../config/commands.json -gnb "MSSIM-gnb-001-01-1"
 ```
 
 

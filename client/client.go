@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"client-server/models"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,11 +16,12 @@ import (
 )
 
 var (
-	port     = flag.Int("p", 0, "server port")
-	dump     = flag.Bool("dump", false, "list all UEs and gNodeBs")
-	helpFlag = flag.Bool("help", false, "show help")
-	ueFlag   = flag.String("ue", "", "connect to UE node")
-	gnbFlag  = flag.String("gnb", "", "connect to gNodeB")
+	port        = flag.Int("p", 0, "server port")
+	dump        = flag.Bool("dump", false, "list all UEs and gNodeBs")
+	helpFlag    = flag.Bool("help", false, "show help")
+	ueFlag      = flag.String("ue", "", "connect to UE node")
+	gnbFlag     = flag.String("gnb", "", "connect to gNodeB")
+	commandFile = flag.String("c", "", "path to command configuration JSON file")
 )
 
 func savePort(port int) error {
@@ -55,13 +57,11 @@ func getDump() string {
 	return string(body)
 }
 
-// Response structure for command results
 type CommandResponse struct {
 	Response string `json:"response"`
 	Error    string `json:"error"`
 }
 
-// Send a single command to a specific node
 func sendCommand(command string, nodeType string, nodeName string) string {
 	url := getServerAddress() + "/command"
 	data, _ := json.Marshal(map[string]string{
@@ -93,113 +93,71 @@ func showHelp() {
 	fmt.Println("  ./cli --dump              : List all UEs and gNodeBs")
 	fmt.Println("  ./cli -ue <ue-name>       : Connect to a specific UE")
 	fmt.Println("  ./cli -gnb <gnb-name>     : Connect to a specific gNodeB")
+	fmt.Println("  ./cli -c <config-file>    : Load commands from a JSON configuration file")
 }
 
-// Setup UE structure commands
-func setupUEShell(shell *ishell.Shell, ueNames []string) {
-	for _, ueName := range ueNames {
-		shell.AddCmd(&ishell.Cmd{
-			Name: "register",
-			Help: "Sign in the UE to Core",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("register "+args, "ue", ueName)
-				c.Println(response)
-			},
-		})
+func loadCommandsConfig(filePath string) (*models.CommandConfig, error) {
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading config file: %v", err)
+	}
+
+	var commands models.CommandConfig
+	err = json.Unmarshal(data, &commands)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing config file: %v", err)
+	}
+
+	return &commands, nil
+}
+
+func setupUECommands(shell *ishell.Shell, commandsConf *models.CommandConfig, ueNames []string) {
+	for _, cmd := range commandsConf.UE.Commands {
+		// Create a copy of cmd for the closure
+		cmdCopy := cmd
 
 		shell.AddCmd(&ishell.Cmd{
-			Name: "deregister",
-			Help: "Logout the UE from Core",
+			Name: cmdCopy.Name,
+			Help: cmdCopy.Help,
 			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("deregister "+args, "ue", ueName)
-				c.Println(response)
-			},
-		})
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: "xn-handover",
-			Help: "Execute XN handover procedure",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("xn-handover "+args, "ue", ueName)
-				c.Println(response)
-			},
-		})
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: "n2-handover",
-			Help: "Execute N2 handover procedure",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("n2-handover "+args, "ue", ueName)
-				c.Println(response)
+				for _, ueName := range ueNames {
+					command := cmdCopy.Name
+					if len(c.Args) > 0 {
+						command += " " + strings.Join(c.Args, " ")
+					}
+					response := sendCommand(command, "ue", ueName)
+					if len(ueNames) > 1 {
+						c.Printf("Response for UE %s:\n%s\n", ueName, response)
+					} else {
+						c.Println(response)
+					}
+				}
 			},
 		})
 	}
 }
 
-// Setup gNodeB structure commands
-func setupGnbShell(shell *ishell.Shell, gnbNames []string) {
-	for _, gnbName := range gnbNames {
-		shell.AddCmd(&ishell.Cmd{
-			Name: "amf-info",
-			Help: "Show status information about AMF",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("amf-info "+args, "gnb", gnbName)
-				c.Println(response)
-			},
-		})
+func setupGnbCommands(shell *ishell.Shell, commandsConf *models.CommandConfig, gnbNames []string) {
+	for _, cmd := range commandsConf.GNB.Commands {
+		// Create a copy of cmd for the closure
+		cmdCopy := cmd
 
 		shell.AddCmd(&ishell.Cmd{
-			Name: "amf-list",
-			Help: "List all AMFs associated with the gNB",
+			Name: cmdCopy.Name,
+			Help: cmdCopy.Help,
 			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("amf-list "+args, "gnb", gnbName)
-				c.Println(response)
-			},
-		})
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: "status",
-			Help: "Check the status of the gNodeB",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("status "+args, "gnb", gnbName)
-				c.Println(response)
-			},
-		})
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: "info",
-			Help: "Show information about the gNodeB",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("info "+args, "gnb", gnbName)
-				c.Println(response)
-			},
-		})
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: "ue-list",
-			Help: "List all UEs associated with the gNodeB",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("ue-list "+args, "gnb", gnbName)
-				c.Println(response)
-			},
-		})
-
-		shell.AddCmd(&ishell.Cmd{
-			Name: "ue-count",
-			Help: "Print the total number of UEs connected to this gNodeB",
-			Func: func(c *ishell.Context) {
-				args := strings.Join(c.Args, " ")
-				response := sendCommand("ue-count "+args, "gnb", gnbName)
-				c.Println(response)
+				for _, gnbName := range gnbNames {
+					command := cmdCopy.Name
+					if len(c.Args) > 0 {
+						command += " " + strings.Join(c.Args, " ")
+					}
+					response := sendCommand(command, "gnb", gnbName)
+					if len(gnbNames) > 1 {
+						c.Printf("Response for gNodeB %s:\n%s\n", gnbName, response)
+					} else {
+						c.Println(response)
+					}
+				}
 			},
 		})
 	}
@@ -214,7 +172,6 @@ func main() {
 	}
 
 	if *port > 0 {
-		// Save the port when connecting
 		if err := savePort(*port); err != nil {
 			fmt.Printf("Error saving port: %v\n", err)
 			return
@@ -233,46 +190,43 @@ func main() {
 		return
 	}
 
-	// If dump flag is provided, retrieve the dump from the server
 	if *dump {
 		response := getDump()
 		fmt.Println(response)
 		return
 	}
 
-	// If user specifies ueFlag, set up UE commands
+	// Check if command file is provided
+	if *commandFile == "" {
+		fmt.Println("Command configuration file is required. Use -c <config-file>")
+		return
+	}
+
+	// Load commands from file
+	commandsConf, err := loadCommandsConfig(*commandFile)
+	if err != nil {
+		fmt.Printf("Error loading commands: %v\n", err)
+		return
+	}
+
+	shell := ishell.New()
+	shell.SetPrompt(">>> ")
+	shell.ShowPrompt(true)
+
 	if *ueFlag != "" {
 		ueNames := strings.Fields(*ueFlag)
-
-		shell := ishell.New()
-		shell.SetPrompt(">>> ")
-		shell.ShowPrompt(true)
-
 		shell.Println("Connected to UE(s):", strings.Join(ueNames, ", "))
 		shell.Println("Type 'help' for available commands")
-
-		setupUEShell(shell, ueNames)
+		setupUECommands(shell, commandsConf, ueNames)
 		shell.Run()
-		return
-	}
-
-	// If user specifies gnbFlag, set up gNodeB commands
-	if *gnbFlag != "" {
+	} else if *gnbFlag != "" {
 		gnbNames := strings.Fields(*gnbFlag)
-
-		shell := ishell.New()
-		shell.SetPrompt(">>> ")
-		shell.ShowPrompt(true)
-
 		shell.Println("Connected to gNodeB(s):", strings.Join(gnbNames, ", "))
 		shell.Println("Type 'help' for available commands")
-
-		setupGnbShell(shell, gnbNames)
+		setupGnbCommands(shell, commandsConf, gnbNames)
 		shell.Run()
-		return
+	} else {
+		fmt.Println("Usage: cli -ue <ue-name> or cli -gnb <gnb-name>")
+		os.Exit(1)
 	}
-
-	// If neither -ue nor -gnb is provided, show usage
-	fmt.Println("Usage: cli -ue <ue-name> or cli -gnb <gnb-name>")
-	os.Exit(1)
 }
