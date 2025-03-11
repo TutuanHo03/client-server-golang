@@ -29,19 +29,19 @@ To run the client CLI, use the following command:
 ```sh
 cd client
 # For UE
-./client -c ../config/commands.json -ue "<node-name>"
+./client -c ../config/command.json -ue "<node-name>"
 # For gNodeB
-./client -c ../config/commands.json -gnb "<gnb-name>"
+./client -c ../config/command.json -gnb "<gnb-name>"
 ```
 
 For example:
 
 ```sh
 # For UE:
-./client -c ../config/commands.json -ue "imsi-306956963543741"
+./client -c ../config/command.json -ue "imsi-306956963543741"
 
 # For gNodeB
-./client -c ../config/commands.json -gnb "MSSIM-gnb-001-01-1"
+./client -c ../config/command.json -gnb "MSSIM-gnb-001-01-1"
 ```
 
 

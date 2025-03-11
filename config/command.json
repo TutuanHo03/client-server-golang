@@ -106,7 +106,7 @@
         {
           "name": "amf-info",
           "help": "Show some status information about the given AMF",
-          "defaultUsage": "Usage: amf-info [--version] [--help]",
+          "defaultUsage": "Usage: amf-info [--version] [--help] [--status] [--detail]",
           "subcommands": [
             {
               "name": "--version",
@@ -119,16 +119,21 @@
               "response": "Usage: amf-info [--version] [amf-name]\n--version : Show AMF Info version\n--help    : Show this help message"
             },
             {
-              "name": "default",
-              "help": "Show AMF info",
-              "response": "AMF Info for gNodeB ${nodeName}: Connected and operational"
+              "name": "--status",
+              "help": "Show AMF status",
+              "response": "AMF Status for gNodeB ${nodeName}: Connected and operational"
+            },
+            {
+              "name": "--detail",
+              "help": "Show AMF detail",
+              "response": "AMF Detail for gNodeB ${nodeName}: ID=AMF001, Capacity=85%"
             }
           ]
         },
         {
           "name": "amf-list",
           "help": "List all AMFs associated with the gNB",
-          "defaultUsage": "Usage: amf-list [--help]",
+          "defaultUsage": "Usage: amf-list [--help] [--all] [--active]",
           "subcommands": [
             {
               "name": "--help",
@@ -136,9 +141,14 @@
               "response": "Usage: amf-list [--help]\n--help   : Show this help message"
             },
             {
-              "name": "default",
+              "name": "--all",
               "help": "List AMFs",
               "response": "AMF List for gNodeB ${nodeName}:\nAMF-01\nAMF-02\nAMF-03"
+            },
+            {
+              "name": "--active",
+              "help": "List active AMFs",
+              "response": "Active AMFs connected to gNodeB ${nodeName}:\nAMF-02\nAMF-03"
             }
           ]
         },
@@ -155,7 +165,7 @@
             {
               "name": "--detailed",
               "help": "Show detailed status",
-              "response": "Detailed Status for gNodeB ${nodeName}: Full operational details..."
+              "response": "Detailed Status for gNodeB ${nodeName}: CPU 5%, Memory 20%"
             },
             {
               "name": "--help",
@@ -167,7 +177,7 @@
         {
           "name": "info",
           "help": "Show information about the gNodeB",
-          "defaultUsage": "Usage: info [--help]",
+          "defaultUsage": "Usage: info [--help] [--default]",
           "subcommands": [
             {
               "name": "--help",
@@ -175,7 +185,7 @@
               "response": "Usage: info\nShow information about gNodeB"
             },
             {
-              "name": "default",
+              "name": "--default",
               "help": "Show gNodeB info",
               "response": "gNodeB Info for ${nodeName}: Model MSSIM-gnb-001, Location: Data Center A"
             }
@@ -184,7 +194,7 @@
         {
           "name": "ue-list",
           "help": "List all UEs associated with the gNodeB",
-          "defaultUsage": "Usage: ue-list [--version] [--help]",
+          "defaultUsage": "Usage: ue-list [--version] [--help] [--all] [--active]",
           "subcommands": [
             {
               "name": "--version",
@@ -197,16 +207,21 @@
               "response": "Usage: ue-list [--version]\nList all UEs associated with the gNodeB"
             },
             {
-              "name": "default",
+              "name": "--all",
               "help": "List UEs",
               "response": "Connected UEs for gNodeB ${nodeName}:\nimsi-306956963543741\nimsi-306950959944062"
+            },
+            {
+              "name": "--active",
+              "help": "List active UEs",
+              "response": "Active UEs connected to gNodeB ${nodeName}:\nimsi-306950959944062"
             }
           ]
         },
         {
           "name": "ue-count",
           "help": "Print the total number of UEs connected to this gNodeB",
-          "defaultUsage": "Usage: ue-count [--help]",
+          "defaultUsage": "Usage: ue-count [--help] [--all]",
           "subcommands": [
             {
               "name": "--help",
@@ -214,7 +229,7 @@
               "response": "Usage: ue-count\nPrint the total number of UEs connected to this gNodeB"
             },
             {
-              "name": "default",
+              "name": "--all",
               "help": "Count UEs",
               "response": "Total number of UEs connected to gNodeB ${nodeName}: 2"
             }
