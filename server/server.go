@@ -8,7 +8,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/abiosoft/ishell/v2"
 	"github.com/gin-gonic/gin"
@@ -60,7 +62,6 @@ func (s *Server) LoadCommandsConfig(filePath string) error {
 func renderResponse(response string, nodeName string, args []string) string {
 	result := strings.Replace(response, "${nodeName}", nodeName, -1)
 
-	// Replace ${arg1}, ${arg2}, etc. with actual arguments if provided
 	for i, arg := range args {
 		if i > 0 { // Skip the subcommand itself
 			argPlaceholder := fmt.Sprintf("${arg%d}", i)
@@ -84,6 +85,37 @@ func (s *Server) setupUECommands(shell *ishell.Shell, ueName string) {
 				if len(c.Args) == 0 {
 					c.Println(cmdCopy.DefaultUsage)
 					return
+				}
+
+				// Special case for complex registration command
+				if cmdCopy.Name == "register" && len(c.Args) >= 2 {
+					waitTime := 0
+					amfs := []string{}
+
+					// Parse arguments
+					for i := 0; i < len(c.Args); i++ {
+						if c.Args[i] == "-h" && i+1 < len(c.Args) {
+							// Try to parse wait time
+							ms, err := strconv.Atoi(c.Args[i+1])
+							if err == nil {
+								waitTime = ms
+								i++ // Skip the next argument which is the milliseconds value
+							}
+						} else if c.Args[i] == "--amf" && i+1 < len(c.Args) {
+							// Collect AMF names
+							amfs = append(amfs, c.Args[i+1])
+							i++ // Skip the next argument which is the AMF name
+						}
+					}
+
+					// If we have both wait time and AMFs, handle special case
+					if waitTime > 0 && len(amfs) > 0 {
+						c.Printf("Waiting ... %d mili seconds\n", waitTime)
+
+						time.Sleep(time.Duration(waitTime) * time.Millisecond)
+						c.Printf("Done registration for UE %s to %s\n", ueName, strings.Join(amfs, " "))
+						return
+					}
 				}
 
 				subcommand := c.Args[0]
@@ -155,15 +187,26 @@ func (s *Server) setupGnbCommands(shell *ishell.Shell, gnbName string) {
 
 // API Handlers
 func (s *Server) handleConnect(c *gin.Context) {
-	c.String(200, "Connected successfully")
+	c.JSON(200, gin.H{
+		"status": "Connected successfully",
+		"objects": gin.H{
+			"ue":  "User Equipment",
+			"gnb": "gNodeB",
+		},
+	})
 }
 
 func (s *Server) handleDump(c *gin.Context) {
-	response := "Here all the UE and gNodeB server have got:\nUE:\n"
-	response += strings.Join(s.activeUEs, "\n")
-	response += "\ngNodeB:\n"
-	response += strings.Join(s.gNodeBs, "\n")
-	c.String(200, response)
+	nodeType := c.Param("nodeType")
+
+	if nodeType == "ue" {
+		c.JSON(200, gin.H{"nodes": s.activeUEs})
+	} else if nodeType == "gnb" {
+		c.JSON(200, gin.H{"nodes": s.gNodeBs})
+	} else {
+		c.JSON(400, gin.H{"error": "Invalid node type"})
+	}
+
 }
 
 // Updated executeUECommand function
@@ -175,6 +218,45 @@ func (s *Server) executeUECommand(command string, ueName string) string {
 	cmdParts := strings.Fields(command)
 	if len(cmdParts) == 0 {
 		return "Empty command"
+	}
+
+	// Special case for complex registration with wait time
+	if cmdParts[0] == "register" && len(cmdParts) >= 3 {
+		waitTime := 0
+		amfs := []string{}
+
+		// Parse arguments
+		for i := 1; i < len(cmdParts); i++ {
+			if cmdParts[i] == "-h" && i+1 < len(cmdParts) {
+				// Try to parse wait time
+				ms, err := strconv.Atoi(cmdParts[i+1])
+				if err == nil {
+					waitTime = ms
+					i++
+				}
+			} else if cmdParts[i] == "--amf" && i+1 < len(cmdParts) {
+				// Collect AMF names
+				amfs = append(amfs, cmdParts[i+1])
+				i++
+			}
+		}
+
+		// If we have both wait time and AMFs, handle special case
+		if waitTime > 0 && len(amfs) > 0 {
+			result := fmt.Sprintf("Waiting ... %d mili seconds\n", waitTime)
+
+			maxWaitTime := 10000 // 10 seconds
+			actualWaitTime := waitTime
+			if actualWaitTime > maxWaitTime {
+				actualWaitTime = maxWaitTime
+				result += fmt.Sprintf("Note: Wait time limited to %d ms for API safety\n", maxWaitTime)
+			}
+
+			time.Sleep(time.Duration(actualWaitTime) * time.Millisecond)
+
+			result += fmt.Sprintf("Done registration for UE %s to %s", ueName, strings.Join(amfs, " "))
+			return result
+		}
 	}
 
 	// Create a capture buffer to get the command output
@@ -219,7 +301,7 @@ func (s *Server) handleCommand(c *gin.Context) {
 		Command  string `json:"command" binding:"required"`
 		NodeType string `json:"nodeType" binding:"required"`
 		NodeName string `json:"nodeName" binding:"required"`
-	}
+	} //dùng luôn ishell để xử lý command, define luôn hàm xử lý command
 
 	// Bind the request body to the struct
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -271,6 +353,35 @@ func (s *Server) handleGetCommands(c *gin.Context) {
 	c.JSON(200, gin.H{"commands": commands})
 }
 
+// Check if node exists
+func (s *Server) handleCheckNode(c *gin.Context) {
+	nodeType := c.Param("nodeType")
+	nodeName := c.Param("nodeName")
+
+	exists := false
+
+	if nodeType == "ue" {
+		for _, name := range s.activeUEs {
+			if name == nodeName {
+				exists = true
+				break
+			}
+		}
+	} else if nodeType == "gnb" {
+		for _, name := range s.gNodeBs {
+			if name == nodeName {
+				exists = true
+				break
+			}
+		}
+	} else {
+		c.JSON(400, gin.H{"error": "Invalid node type"})
+		return
+	}
+
+	c.JSON(200, gin.H{"exists": exists})
+}
+
 func main() {
 	flag.Parse()
 	gin.SetMode(gin.ReleaseMode)
@@ -287,9 +398,10 @@ func main() {
 
 	// Setup routes
 	router.GET("/connect", server.handleConnect)
-	router.GET("/dump", server.handleDump)
+	router.GET("/dump/:nodeType", server.handleDump)
 	router.POST("/command", server.handleCommand)
 	router.GET("/commands/:nodeType", server.handleGetCommands)
+	router.GET("/check/:nodeType/:nodeName", server.handleCheckNode)
 
 	// Start the HTTP server
 	log.Printf("Server starting on port 4000...")

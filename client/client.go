@@ -5,54 +5,29 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 
 	"github.com/abiosoft/ishell/v2"
 )
 
 var (
-	port     = flag.Int("p", 0, "server port")
-	dump     = flag.Bool("dump", false, "list all UEs and gNodeBs")
-	helpFlag = flag.Bool("help", false, "show help")
-	ueFlag   = flag.String("ue", "", "connect to UE node")
-	gnbFlag  = flag.String("gnb", "", "connect to gNodeB")
+	serverAddr = flag.String("p", "", "server address (host:port)")
+	helpFlag   = flag.Bool("help", false, "show help")
 )
 
-func savePort(port int) error {
-	return ioutil.WriteFile(".port", []byte(fmt.Sprintf("%d", port)), 0644)
+// Store server address (used across multiple functions)
+var currentServerAddr string
+
+type NodesListResponse struct {
+	Nodes []string `json:"nodes"`
+	Error string   `json:"error"`
 }
 
-func loadPort() int {
-	data, err := ioutil.ReadFile(".port")
-	if err != nil {
-		return 0
-	}
-	port, _ := strconv.Atoi(string(data))
-	return port
-}
-
-func getServerAddress() string {
-	savedPort := loadPort()
-	if *port > 0 {
-		savedPort = *port
-	}
-	return fmt.Sprintf("http://localhost:%d", savedPort)
-}
-
-func getDump() string {
-	url := getServerAddress() + "/dump"
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Sprintf("Error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := ioutil.ReadAll(resp.Body)
-	return string(body)
+type ConnectResponse struct {
+	Status  string            `json:"status"`
+	Objects map[string]string `json:"objects"`
+	Error   string            `json:"error"`
 }
 
 type CommandResponse struct {
@@ -71,8 +46,71 @@ type CommandsListResponse struct {
 	Error    string    `json:"error"`
 }
 
+// Connect to server
+func connectToServer(address string) (*ConnectResponse, error) {
+	url := fmt.Sprintf("http://%s/connect", address)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to server: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result ConnectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("server error: %s", result.Error)
+	}
+
+	return &result, nil
+}
+
+// Get list of nodes
+func getNodesList(nodeType string) ([]string, error) {
+	url := fmt.Sprintf("http://%s/dump/%s", currentServerAddr, nodeType)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to server: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result NodesListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("server error: %s", result.Error)
+	}
+
+	return result.Nodes, nil
+}
+
+// Get commands for a node type
+func getCommandsList(nodeType string) ([]Command, error) {
+	url := fmt.Sprintf("http://%s/commands/%s", currentServerAddr, nodeType)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("error connecting to server: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result CommandsListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("error decoding response: %v", err)
+	}
+
+	if result.Error != "" {
+		return nil, fmt.Errorf("server error: %s", result.Error)
+	}
+
+	return result.Commands, nil
+}
+
 func sendCommand(command string, nodeType string, nodeName string) string {
-	url := getServerAddress() + "/command"
+	url := fmt.Sprintf("http://%s/command", currentServerAddr)
 	data, _ := json.Marshal(map[string]string{
 		"command":  command,
 		"nodeType": nodeType,
@@ -96,35 +134,32 @@ func sendCommand(command string, nodeType string, nodeName string) string {
 	return result.Response
 }
 
-func getCommandsList(nodeType string) ([]Command, error) {
-	url := fmt.Sprintf("%s/commands/%s", getServerAddress(), nodeType)
+// Check if a node exists
+func checkNodeExists(nodeType string, nodeName string) (bool, error) {
+	url := fmt.Sprintf("http://%s/check/%s/%s", currentServerAddr, nodeType, nodeName)
 	resp, err := http.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("error connecting to server: %v", err)
+		return false, fmt.Errorf("error connecting to server: %v", err)
 	}
 	defer resp.Body.Close()
 
-	var result CommandsListResponse
+	var result struct {
+		Exists bool   `json:"exists"`
+		Error  string `json:"error"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("error decoding response: %v", err)
+		return false, fmt.Errorf("error decoding response: %v", err)
 	}
 
 	if result.Error != "" {
-		return nil, fmt.Errorf("server error: %s", result.Error)
+		return false, fmt.Errorf("server error: %s", result.Error)
 	}
 
-	return result.Commands, nil
+	return result.Exists, nil
 }
 
-func showHelp() {
-	fmt.Println("Usage:")
-	fmt.Println("  ./cli -p <port>           : Connect to server")
-	fmt.Println("  ./cli --dump              : List all UEs and gNodeBs")
-	fmt.Println("  ./cli -ue <ue-name>       : Connect to a specific UE")
-	fmt.Println("  ./cli -gnb <gnb-name>     : Connect to a specific gNodeB")
-}
-
-func setupCommands(shell *ishell.Shell, nodeType string, nodeNames []string) error {
+func setupNodeCommands(shell *ishell.Shell, nodeType string, nodeName string) error {
 	// Get the list of commands from server
 	commands, err := getCommandsList(nodeType)
 	if err != nil {
@@ -139,38 +174,69 @@ func setupCommands(shell *ishell.Shell, nodeType string, nodeNames []string) err
 			Name: cmdCopy.Name,
 			Help: cmdCopy.Help,
 			Func: func(c *ishell.Context) {
-				// Nếu không có tham số, hiển thị cách sử dụng
+				// If no arguments, show default usage
 				if len(c.Args) == 0 {
 					c.Println(cmdCopy.DefaultUsage)
 					return
 				}
 
 				// Build the complete command to send to the server
-				for _, nodeName := range nodeNames {
-					command := cmdCopy.Name
-					if len(c.Args) > 0 {
-						command += " " + strings.Join(c.Args, " ")
-					}
-
-					// Send response to server
-					response := sendCommand(command, nodeType, nodeName)
-
-					// Display the response
-					if len(nodeNames) > 1 {
-						if nodeType == "ue" {
-							c.Printf("Response for UE %s:\n%s\n", nodeName, response)
-						} else {
-							c.Printf("Response for gNodeB %s:\n%s\n", nodeName, response)
-						}
-					} else {
-						c.Println(response)
-					}
+				command := cmdCopy.Name
+				if len(c.Args) > 0 {
+					command += " " + strings.Join(c.Args, " ")
 				}
+
+				// Send response to server
+				response := sendCommand(command, nodeType, nodeName)
+				c.Println(response)
 			},
 		})
 	}
+	// Add exit command to return to main shell
+	shell.AddCmd(&ishell.Cmd{
+		Name: "exit",
+		Help: "Return to main shell",
+		Func: func(c *ishell.Context) {
+			c.Stop()
+		},
+	})
 
 	return nil
+}
+
+// Process "select" command
+func handleSelectCommand(mainShell *ishell.Shell, nodeType string, nodeName string) {
+	// Check if node exists
+	exists, err := checkNodeExists(nodeType, nodeName)
+	if err != nil {
+		mainShell.Println("Error:", err)
+		return
+	}
+
+	if !exists {
+		mainShell.Printf("Node %s of type %s does not exist\n", nodeName, nodeType)
+		return
+	}
+
+	// Create a sub-shell for this node
+	nodeShell := ishell.New()
+	nodeShell.SetPrompt(fmt.Sprintf("%s >>> ", nodeName))
+	nodeShell.ShowPrompt(true)
+
+	// Setup node commands
+	if err := setupNodeCommands(nodeShell, nodeType, nodeName); err != nil {
+		mainShell.Println("Error setting up commands:", err)
+		return
+	}
+
+	// Run the node shell (this will block until exit)
+	nodeShell.Run()
+}
+
+func showHelp() {
+	fmt.Println("Usage:")
+	fmt.Println("  client -p <host:port>   : Connect to server")
+	fmt.Println("  client -help            : Show this help message")
 }
 
 func main() {
@@ -181,61 +247,105 @@ func main() {
 		return
 	}
 
-	if *port > 0 {
-		if err := savePort(*port); err != nil {
-			fmt.Printf("Error saving port: %v\n", err)
-			return
-		}
-		_, err := http.Get(getServerAddress() + "/connect")
-		if err != nil {
-			fmt.Printf("Error connecting to server: %v\n", err)
-			return
-		}
-		fmt.Printf("Connected to port %d successfully\n", *port)
+	if *serverAddr == "" {
+		fmt.Println("Server address is required. Use -p <host:port>")
 		return
 	}
 
-	if loadPort() == 0 {
-		fmt.Println("Not connected to any port. Please use -p <port> first")
+	// Save the server address for use across functions
+	currentServerAddr = *serverAddr
+
+	// Connect to server
+	connectResp, err := connectToServer(*serverAddr)
+	if err != nil {
+		fmt.Printf("Failed to connect: %v\n", err)
 		return
 	}
 
-	if *dump {
-		response := getDump()
-		fmt.Println(response)
-		return
+	// Extract available object types
+	var objTypes []string
+	for k := range connectResp.Objects {
+		objTypes = append(objTypes, k)
 	}
 
+	// Create main shell
 	shell := ishell.New()
 	shell.SetPrompt(">>> ")
 	shell.ShowPrompt(true)
 
-	if *ueFlag != "" {
-		ueNames := strings.Fields(*ueFlag)
-		shell.Println("Connected to UE(s):", strings.Join(ueNames, ", "))
-		shell.Println("Type 'help' for available commands")
+	fmt.Printf("Connected to server at %s\n", *serverAddr)
+	fmt.Printf("Available object types: %s\n", strings.Join(objTypes, ", "))
 
-		// Get the commands of UE from server and setup shell
-		if err := setupCommands(shell, "ue", ueNames); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			return
-		}
+	// Add dump command
+	shell.AddCmd(&ishell.Cmd{
+		Name: "dump",
+		Help: "List UEs or gNBs (usage: dump <ue|gnb>)",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) != 1 {
+				c.Println("Usage: dump <ue|gnb>")
+				return
+			}
 
-		shell.Run()
-	} else if *gnbFlag != "" {
-		gnbNames := strings.Fields(*gnbFlag)
-		shell.Println("Connected to gNodeB(s):", strings.Join(gnbNames, ", "))
-		shell.Println("Type 'help' for available commands")
+			nodeType := c.Args[0]
+			nodes, err := getNodesList(nodeType)
+			if err != nil {
+				c.Println("Error:", err)
+				return
+			}
 
-		// Get the commands of Gnb from server and setup shell
-		if err := setupCommands(shell, "gnb", gnbNames); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			return
-		}
+			for _, node := range nodes {
+				c.Println(node)
+			}
+		},
+	})
 
-		shell.Run()
-	} else {
-		fmt.Println("Usage: cli -ue <ue-name> or cli -gnb <gnb-name>")
-		os.Exit(1)
-	}
+	// Add select command
+	shell.AddCmd(&ishell.Cmd{
+		Name: "select",
+		Help: "Select a node to interact with (usage: select <node-name>)",
+		Func: func(c *ishell.Context) {
+			if len(c.Args) != 1 {
+				c.Println("Usage: select <node-name>")
+				return
+			}
+
+			nodeName := c.Args[0]
+
+			// Try to get the node type from the server
+			isUE, err := checkNodeExists("ue", nodeName)
+			if err != nil {
+				c.Println("Error checking node: %v\n", err)
+				return
+			}
+
+			if isUE {
+				handleSelectCommand(shell, "ue", nodeName)
+				return
+			}
+
+			isGNB, err := checkNodeExists("gnb", nodeName)
+			if err != nil {
+				c.Println("Error checking node: %v\n", err)
+				return
+			}
+
+			if isGNB {
+				handleSelectCommand(shell, "gnb", nodeName)
+				return
+			}
+			c.Printf("Node %s does not exist\n", nodeName)
+		},
+	})
+
+	// Add exit command
+	shell.AddCmd(&ishell.Cmd{
+		Name: "exit",
+		Help: "Exit the client",
+		Func: func(c *ishell.Context) {
+			c.Stop()
+		},
+	})
+
+	// Run the shell
+	shell.Run()
 }
