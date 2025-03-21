@@ -13,10 +13,10 @@ type NodeCommands struct {
 
 // Command represents a single command definition
 type Command struct {
-	Name         string       `json:"name"`
-	Help         string       `json:"help"`
-	Subcommands  []Subcommand `json:"subcommands"`
-	DefaultUsage string       `json:"defaultUsage"`
+	Name        string       `json:"name"`
+	Help        string       `json:"help"`
+	Subcommands []Subcommand `json:"subcommands"`
+	Usage       string       `json:"usage"`
 }
 
 // Subcommand represents a subcommand within a command
@@ -24,4 +24,5 @@ type Subcommand struct {
 	Name     string `json:"name"`
 	Help     string `json:"help"`
 	Response string `json:"response"`
+	Usage    string `json:"usage,omitempty"`
 }

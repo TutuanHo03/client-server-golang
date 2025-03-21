@@ -8,6 +8,13 @@ To run the server, navigate to the `server` directory and run:
 cd server
 go build -o server
 ./server -c ../config/command.json
+
+```
+
+```sh
+cd server
+go build -o server
+
 ```
 
 ## Building the Client CLI

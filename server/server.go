@@ -8,9 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/abiosoft/ishell/v2"
 	"github.com/gin-gonic/gin"
@@ -20,14 +18,35 @@ var (
 	configFile = flag.String("c", "command.json", "Path to the configuration file")
 )
 
+// IShell interface for command execution
+type IShell interface {
+	LoadCommands(config models.CommandConfig)
+	SetupCommands(shell *ishell.Shell, nodeName string)
+	HandleAPIRequest(command string, nodeName string) string
+}
+
+// UEShell implements IShell for UE commands
+type UEShell struct {
+	commands []models.Command
+	server   *Server
+}
+
+// GnbShell implements IShell for gNodeB commands
+type GnbShell struct {
+	commands []models.Command
+	server   *Server
+}
+
 type Server struct {
 	activeUEs    []string
 	gNodeBs      []string
 	commandsConf models.CommandConfig
+	ueShell      IShell
+	gnbShell     IShell
 }
 
 func NewServer() *Server {
-	return &Server{
+	s := &Server{
 		activeUEs: []string{
 			"imsi-306956963543741",
 			"imsi-306950959944062",
@@ -41,6 +60,11 @@ func NewServer() *Server {
 			"MSSIM-gnb-003-03-2",
 		},
 	}
+
+	s.ueShell = &UEShell{server: s}
+	s.gnbShell = &GnbShell{server: s}
+
+	return s
 }
 
 // LoadCommandsConfig loads command configurations from a JSON file
@@ -54,6 +78,9 @@ func (s *Server) LoadCommandsConfig(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("error parsing config file: %v", err)
 	}
+
+	s.ueShell.LoadCommands(s.commandsConf)
+	s.gnbShell.LoadCommands(s.commandsConf)
 
 	return nil
 }
@@ -72,117 +99,166 @@ func renderResponse(response string, nodeName string, args []string) string {
 	return result
 }
 
-// Setup UE commands
-func (s *Server) setupUECommands(shell *ishell.Shell, ueName string) {
-	for _, cmd := range s.commandsConf.UE.Commands {
-		// Create a copy of cmd for the closure
-		cmdCopy := cmd
+// Load UE commands
+func (u *UEShell) LoadCommands(config models.CommandConfig) {
+	u.commands = config.UE.Commands
+}
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: cmdCopy.Name,
-			Help: cmdCopy.Help,
+// Setup UE commands using ishell's command tree
+func (u *UEShell) SetupCommands(shell *ishell.Shell, nodeName string) {
+	for _, cmdConfig := range u.commands {
+		// Create the parent command
+		mainCmd := &ishell.Cmd{
+			Name: cmdConfig.Name,
+			Help: cmdConfig.Help,
 			Func: func(c *ishell.Context) {
+				// If no args, show usage
 				if len(c.Args) == 0 {
-					c.Println(cmdCopy.DefaultUsage)
+					c.Println(cmdConfig.Usage)
 					return
 				}
 
-				// Special case for complex registration command
-				if cmdCopy.Name == "register" && len(c.Args) >= 2 {
-					waitTime := 0
-					amfs := []string{}
-
-					// Parse arguments
-					for i := 0; i < len(c.Args); i++ {
-						if c.Args[i] == "-h" && i+1 < len(c.Args) {
-							// Try to parse wait time
-							ms, err := strconv.Atoi(c.Args[i+1])
-							if err == nil {
-								waitTime = ms
-								i++ // Skip the next argument which is the milliseconds value
-							}
-						} else if c.Args[i] == "--amf" && i+1 < len(c.Args) {
-							// Collect AMF names
-							amfs = append(amfs, c.Args[i+1])
-							i++ // Skip the next argument which is the AMF name
-						}
+				// Try to execute as a subcommand
+				cmd, args := c.Cmd.FindCmd(c.Args)
+				if cmd == nil {
+					c.Println("Unknown subcommand:", c.Args[0])
+					c.Println("Available subcommands:")
+					for _, subcmd := range c.Cmd.Children() {
+						c.Printf("  %s: %s\n", subcmd.Name, subcmd.Help)
 					}
-
-					// If we have both wait time and AMFs, handle special case
-					if waitTime > 0 && len(amfs) > 0 {
-						c.Printf("Waiting ... %d mili seconds\n", waitTime)
-
-						time.Sleep(time.Duration(waitTime) * time.Millisecond)
-						c.Printf("Done registration for UE %s to %s\n", ueName, strings.Join(amfs, " "))
-						return
-					}
+					return
 				}
 
-				subcommand := c.Args[0]
-				found := false
-
-				for _, sub := range cmdCopy.Subcommands {
-					if sub.Name == subcommand {
-						found = true
-						c.Println(renderResponse(sub.Response, ueName, c.Args))
-						break
-					}
-				}
-
-				if !found {
-					// Check if there's a default handler
-					for _, sub := range cmdCopy.Subcommands {
-						if sub.Name == "default" {
-							c.Println(renderResponse(sub.Response, ueName, c.Args))
-							return
-						}
-					}
-					c.Println("Invalid subcommand for " + cmdCopy.Name)
-				}
+				// Command found, execute it
+				cmd.Func(ishell.NewContext(shell, cmd, args))
 			},
-		})
+		}
+
+		// Add subcommands
+		for _, subConfig := range cmdConfig.Subcommands {
+			subCmd := &ishell.Cmd{
+				Name: subConfig.Name,
+				Help: subConfig.Help,
+				Func: func(subConfig models.Subcommand) func(c *ishell.Context) {
+					return func(c *ishell.Context) {
+						response := renderResponse(subConfig.Response, nodeName, c.Args)
+						c.Println(response)
+					}
+				}(subConfig),
+			}
+			mainCmd.AddCmd(subCmd)
+		}
+
+		// Add the main command to shell
+		shell.AddCmd(mainCmd)
 	}
 }
 
-// Setup gNodeB commands
-func (s *Server) setupGnbCommands(shell *ishell.Shell, gnbName string) {
-	for _, cmd := range s.commandsConf.GNB.Commands {
-		// Create a copy of cmd for the closure
-		cmdCopy := cmd
+// Handle API requests for UE commands
+func (u *UEShell) HandleAPIRequest(command string, nodeName string) string {
+	// Create a temporary shell to process the command
+	shell := ishell.New()
 
-		shell.AddCmd(&ishell.Cmd{
-			Name: cmdCopy.Name,
-			Help: cmdCopy.Help,
+	// Set up commands in the shell
+	u.SetupCommands(shell, nodeName)
+
+	// Capture output
+	var outputBuffer strings.Builder
+	shell.SetOut(&outputBuffer)
+
+	// Process the command
+	cmdParts := strings.Fields(command)
+	if len(cmdParts) == 0 {
+		return "Empty command"
+	}
+
+	err := shell.Process(cmdParts...)
+	if err != nil {
+		return fmt.Sprintf("Error executing command: %v", err)
+	}
+
+	return outputBuffer.String()
+}
+
+// Load Gnb commands
+func (g *GnbShell) LoadCommands(config models.CommandConfig) {
+	g.commands = config.GNB.Commands
+}
+
+// Setup Gnb commands using ishell's command tree
+func (g *GnbShell) SetupCommands(shell *ishell.Shell, nodeName string) {
+	for _, cmdConfig := range g.commands {
+		// Create the parent command
+		mainCmd := &ishell.Cmd{
+			Name: cmdConfig.Name,
+			Help: cmdConfig.Help,
 			Func: func(c *ishell.Context) {
+				// If no args, show usage
 				if len(c.Args) == 0 {
-					c.Println(cmdCopy.DefaultUsage)
+					c.Println(cmdConfig.Usage)
 					return
 				}
 
-				subcommand := c.Args[0]
-				found := false
-
-				for _, sub := range cmdCopy.Subcommands {
-					if sub.Name == subcommand {
-						found = true
-						c.Println(renderResponse(sub.Response, gnbName, c.Args))
-						break
+				// Try to execute as a subcommand
+				cmd, args := c.Cmd.FindCmd(c.Args)
+				if cmd == nil {
+					c.Println("Unknown subcommand:", c.Args[0])
+					c.Println("Available subcommands:")
+					for _, subcmd := range c.Cmd.Children() {
+						c.Printf("  %s: %s\n", subcmd.Name, subcmd.Help)
 					}
+					return
 				}
 
-				if !found {
-					// Check if there's a default handler
-					for _, sub := range cmdCopy.Subcommands {
-						if sub.Name == "default" {
-							c.Println(renderResponse(sub.Response, gnbName, c.Args))
-							return
-						}
-					}
-					c.Println("Invalid subcommand for " + cmdCopy.Name)
-				}
+				// Command found, execute it
+				cmd.Func(ishell.NewContext(shell, cmd, args))
 			},
-		})
+		}
+
+		// Add subcommands
+		for _, subConfig := range cmdConfig.Subcommands {
+			subCmd := &ishell.Cmd{
+				Name: subConfig.Name,
+				Help: subConfig.Help,
+				Func: func(subConfig models.Subcommand) func(c *ishell.Context) {
+					return func(c *ishell.Context) {
+						response := renderResponse(subConfig.Response, nodeName, c.Args)
+						c.Println(response)
+					}
+				}(subConfig),
+			}
+			mainCmd.AddCmd(subCmd)
+		}
+
+		// Add the main command to shell
+		shell.AddCmd(mainCmd)
 	}
+}
+
+// Handle API requests for Gnb commands
+func (g *GnbShell) HandleAPIRequest(command string, nodeName string) string {
+	// Create a temporary shell to process the command
+	shell := ishell.New()
+
+	// Set up commands in the shell
+	g.SetupCommands(shell, nodeName)
+
+	// Capture output
+	var outputBuffer strings.Builder
+	shell.SetOut(&outputBuffer)
+
+	// Process the command
+	cmdParts := strings.Fields(command)
+	if len(cmdParts) == 0 {
+		return "Empty command"
+	}
+
+	err := shell.Process(cmdParts...)
+	if err != nil {
+		return fmt.Sprintf("Error executing command: %v", err)
+	}
+
+	return outputBuffer.String()
 }
 
 // API Handlers
@@ -209,119 +285,31 @@ func (s *Server) handleDump(c *gin.Context) {
 
 }
 
-// Updated executeUECommand function
-func (s *Server) executeUECommand(command string, ueName string) string {
-	shell := ishell.New()
-	s.setupUECommands(shell, ueName)
-
-	// Parse the command to get the command and arguments
-	cmdParts := strings.Fields(command)
-	if len(cmdParts) == 0 {
-		return "Empty command"
-	}
-
-	// Special case for complex registration with wait time
-	if cmdParts[0] == "register" && len(cmdParts) >= 3 {
-		waitTime := 0
-		amfs := []string{}
-
-		// Parse arguments
-		for i := 1; i < len(cmdParts); i++ {
-			if cmdParts[i] == "-h" && i+1 < len(cmdParts) {
-				// Try to parse wait time
-				ms, err := strconv.Atoi(cmdParts[i+1])
-				if err == nil {
-					waitTime = ms
-					i++
-				}
-			} else if cmdParts[i] == "--amf" && i+1 < len(cmdParts) {
-				// Collect AMF names
-				amfs = append(amfs, cmdParts[i+1])
-				i++
-			}
-		}
-
-		// If we have both wait time and AMFs, handle special case
-		if waitTime > 0 && len(amfs) > 0 {
-			result := fmt.Sprintf("Waiting ... %d mili seconds\n", waitTime)
-
-			maxWaitTime := 10000 // 10 seconds
-			actualWaitTime := waitTime
-			if actualWaitTime > maxWaitTime {
-				actualWaitTime = maxWaitTime
-				result += fmt.Sprintf("Note: Wait time limited to %d ms for API safety\n", maxWaitTime)
-			}
-
-			time.Sleep(time.Duration(actualWaitTime) * time.Millisecond)
-
-			result += fmt.Sprintf("Done registration for UE %s to %s", ueName, strings.Join(amfs, " "))
-			return result
-		}
-	}
-
-	// Create a capture buffer to get the command output
-	var outputBuffer strings.Builder
-	shell.SetOut(&outputBuffer)
-
-	// Use the correct API to find and execute the command
-	err := shell.Process(cmdParts...)
-	if err != nil {
-		return fmt.Sprintf("Error executing command: %s", err)
-	}
-
-	return outputBuffer.String()
-}
-
-// Updated executeGnbCommand function
-func (s *Server) executeGnbCommand(command string, gnbName string) string {
-	shell := ishell.New()
-	s.setupGnbCommands(shell, gnbName)
-
-	// Parse the command to get the command and arguments
-	cmdParts := strings.Fields(command)
-	if len(cmdParts) == 0 {
-		return "Empty command"
-	}
-
-	// Create a capture buffer to get the command output
-	var outputBuffer strings.Builder
-	shell.SetOut(&outputBuffer)
-
-	// Use the correct API to find and execute the command
-	err := shell.Process(cmdParts...)
-	if err != nil {
-		return fmt.Sprintf("Error executing command: %s", err)
-	}
-
-	return outputBuffer.String()
-}
-
 func (s *Server) handleCommand(c *gin.Context) {
+	//dùng ishell structure response để xử lý command.
 	var request struct {
 		Command  string `json:"command" binding:"required"`
 		NodeType string `json:"nodeType" binding:"required"`
 		NodeName string `json:"nodeName" binding:"required"`
-	} //dùng luôn ishell để xử lý command, define luôn hàm xử lý command
+	}
 
-	// Bind the request body to the struct
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Handle command based on node type (gnb or ue)
 	var response string
-	if request.NodeType == "gnb" {
-		response = s.executeGnbCommand(request.Command, request.NodeName)
-	} else if request.NodeType == "ue" {
-		response = s.executeUECommand(request.Command, request.NodeName)
+	if request.NodeType == "ue" {
+		response = s.ueShell.HandleAPIRequest(request.Command, request.NodeName)
+	} else if request.NodeType == "gnb" {
+		response = s.gnbShell.HandleAPIRequest(request.Command, request.NodeName)
 	} else {
 		c.JSON(400, gin.H{"error": "Invalid node type"})
 		return
 	}
 
-	// Send the response
 	c.JSON(200, gin.H{"response": response})
+
 }
 
 func (s *Server) handleGetCommands(c *gin.Context) {
@@ -332,17 +320,17 @@ func (s *Server) handleGetCommands(c *gin.Context) {
 	if nodeType == "ue" {
 		for _, cmd := range s.commandsConf.UE.Commands {
 			commands = append(commands, map[string]string{
-				"name":         cmd.Name,
-				"help":         cmd.Help,
-				"defaultUsage": cmd.DefaultUsage,
+				"name":  cmd.Name,
+				"help":  cmd.Help,
+				"usage": cmd.Usage,
 			})
 		}
 	} else if nodeType == "gnb" {
 		for _, cmd := range s.commandsConf.GNB.Commands {
 			commands = append(commands, map[string]string{
-				"name":         cmd.Name,
-				"help":         cmd.Help,
-				"defaultUsage": cmd.DefaultUsage,
+				"name":  cmd.Name,
+				"help":  cmd.Help,
+				"usage": cmd.Usage,
 			})
 		}
 	} else {

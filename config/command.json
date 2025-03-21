@@ -4,16 +4,18 @@
         {
           "name": "register",
           "help": "Sign in the UE to Core",
-          "defaultUsage": "Usage: register [--amf] [--smf] [--version] [--help]",
+          "usage": "Usage: register [--amf] [--smf] [--version] [--help]",
           "subcommands": [
             {
               "name": "--amf",
               "help": "Register UE to AMF",
+              "usage": "register amf [amf-name]",
               "response": "Registering UE ${nodeName} to AMF"
             },
             {
               "name": "--smf",
               "help": "Register UE to SMF",
+              "usage": "register smf [smf-name]",
               "response": "Registering UE ${nodeName} to SMF"
             },
             {
@@ -31,7 +33,7 @@
         {
           "name": "deregister",
           "help": "Logout the UE from Core",
-          "defaultUsage": "Usage: deregister [--force] [--help]",
+          "usage": "Usage: deregister [--force] [--help]",
           "subcommands": [
             {
               "name": "--force",
@@ -44,60 +46,6 @@
               "response": "Usage: deregister [--force]\n--force    : Force deregister UE"
             }
           ]
-        },
-        {
-          "name": "xn-handover",
-          "help": "Execute XN handover procedure",
-          "defaultUsage": "Usage: xn-handover --source <gnb-id> --target <gnb-id> [--help] [--version]",
-          "subcommands": [
-            {
-              "name": "--source",
-              "help": "Source gNB ID",
-              "response": "Executing XN handover for UE ${nodeName} with source gNB ID ${arg1}"
-            },
-            {
-              "name": "--target",
-              "help": "Target gNB ID",
-              "response": "Executing XN handover for UE ${nodeName} with target gNB ID ${arg1}"
-            },
-            {
-              "name": "--help",
-              "help": "Show this help message",
-              "response": "Usage: xn-handover --source <gnb-id> --target <gnb-id>\n--source   : Source gNB ID\n--target   : Target gNB ID"
-            },
-            {
-              "name": "--version",
-              "help": "Show version",
-              "response": "XN Handover command v1.0"
-            }
-          ]
-        },
-        {
-          "name": "n2-handover",
-          "help": "Execute N2 handover procedure",
-          "defaultUsage": "Usage: n2-handover --source <gnb-id> --target <gnb-id> [--help] [--version]",
-          "subcommands": [
-            {
-              "name": "--source",
-              "help": "Source gNB ID",
-              "response": "Executing N2 handover for UE ${nodeName} with source gNB ID ${arg1}"
-            },
-            {
-              "name": "--target",
-              "help": "Target gNB ID",
-              "response": "Executing N2 handover for UE ${nodeName} with target gNB ID ${arg1}"
-            },
-            {
-              "name": "--help",
-              "help": "Show this help message",
-              "response": "Usage: n2-handover --source <gnb-id> --target <gnb-id>\n--source   : Source gNB ID\n--target   : Target gNB ID"
-            },
-            {
-              "name": "--version",
-              "help": "Show version",
-              "response": "N2 Handover command v1.0"
-            }
-          ]
         }
       ]
     },
@@ -106,7 +54,7 @@
         {
           "name": "amf-info",
           "help": "Show some status information about the given AMF",
-          "defaultUsage": "Usage: amf-info [--version] [--help] [--status] [--detail]",
+          "usage": "Usage: amf-info [--version] [--help] [--status] [--detail]",
           "subcommands": [
             {
               "name": "--version",
@@ -133,7 +81,7 @@
         {
           "name": "amf-list",
           "help": "List all AMFs associated with the gNB",
-          "defaultUsage": "Usage: amf-list [--help] [--all] [--active]",
+          "usage": "Usage: amf-list [--help] [--all] [--active]",
           "subcommands": [
             {
               "name": "--help",
@@ -155,7 +103,7 @@
         {
           "name": "status",
           "help": "Check the status of the gNodeB",
-          "defaultUsage": "Usage: status [--simple] [--detailed] [--help]",
+          "usage": "Usage: status [--simple] [--detailed] [--help]",
           "subcommands": [
             {
               "name": "--simple",
@@ -175,26 +123,9 @@
           ]
         },
         {
-          "name": "info",
-          "help": "Show information about the gNodeB",
-          "defaultUsage": "Usage: info [--help] [--default]",
-          "subcommands": [
-            {
-              "name": "--help",
-              "help": "Show this help message",
-              "response": "Usage: info\nShow information about gNodeB"
-            },
-            {
-              "name": "--default",
-              "help": "Show gNodeB info",
-              "response": "gNodeB Info for ${nodeName}: Model MSSIM-gnb-001, Location: Data Center A"
-            }
-          ]
-        },
-        {
           "name": "ue-list",
           "help": "List all UEs associated with the gNodeB",
-          "defaultUsage": "Usage: ue-list [--version] [--help] [--all] [--active]",
+          "usage": "Usage: ue-list [--version] [--help] [--all] [--active]",
           "subcommands": [
             {
               "name": "--version",
@@ -215,23 +146,6 @@
               "name": "--active",
               "help": "List active UEs",
               "response": "Active UEs connected to gNodeB ${nodeName}:\nimsi-306950959944062"
-            }
-          ]
-        },
-        {
-          "name": "ue-count",
-          "help": "Print the total number of UEs connected to this gNodeB",
-          "defaultUsage": "Usage: ue-count [--help] [--all]",
-          "subcommands": [
-            {
-              "name": "--help",
-              "help": "Show this help message",
-              "response": "Usage: ue-count\nPrint the total number of UEs connected to this gNodeB"
-            },
-            {
-              "name": "--all",
-              "help": "Count UEs",
-              "response": "Total number of UEs connected to gNodeB ${nodeName}: 2"
             }
           ]
         }
